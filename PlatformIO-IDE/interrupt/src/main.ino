@@ -30,18 +30,14 @@ PubSubClient client(espClient);
 void setup_wifi() {
   delay(10);
   // We start by connecting to a WiFi network
-  Serial.println();
-  Serial.print("Connecting to ");
+  Serial.print("Connecting to WiFi network: ");
   Serial.println(wifi_ssid);
-
   WiFi.begin(wifi_ssid, wifi_password);
-
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
 
-  Serial.println("");
   Serial.println("WiFi connected");
   Serial.println("IP address: ");
   Serial.println(WiFi.localIP());
@@ -134,7 +130,10 @@ void loop() {
 
  if (tickOccured == true)
  {
-    client.publish("testing/mqtttest", "yes", true);
+    if (! client.publish("testing/mqtttest", "yes"))
+    {
+      Serial.println("Publish failed");
+    };
     Serial.println("Tick Occurred");
     tickOccured = false;
  }
