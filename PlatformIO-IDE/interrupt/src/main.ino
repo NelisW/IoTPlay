@@ -8,22 +8,21 @@
 //download the tar file and untar into the project lib folder
 
 
-//mosquitto_sub -v -d -t "testing/photocell"
+//mosquitto_sub -v -d -t "testing/mqtttest"
 
 extern "C" {
 #include "user_interface.h"
 }
 
-
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
 
-#define wifi_ssid "CJMSW"
-#define wifi_password "00300ABE3FE8"
-
-#define mqtt_server "10.0.0.16"
-#define mqtt_user ""
-#define mqtt_password ""
+#include "../../../../openHABsysfiles/password.h"
+//#define wifi_ssid "yourwifiSSID"
+//#define wifi_password "yourwifipassword"
+//#define mqtt_server "yourmqttserverIP"
+//#define mqtt_user "yourmqttserverusername"
+//#define mqtt_password "yourmqttserverpassword"
 
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -135,7 +134,7 @@ void loop() {
 
  if (tickOccured == true)
  {
-    client.publish("testing/photocell", "yes", true);
+    client.publish("testing/mqtttest", "yes", true);
     Serial.println("Tick Occurred");
     tickOccured = false;
  }

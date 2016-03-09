@@ -20,17 +20,14 @@
 #include "Adafruit_MQTT_Client.h"
 
 /************************* WiFi Access Point *********************************/
-
-#define WLAN_SSID       "CJMSW"
-#define WLAN_PASS       "00300ABE3FE8"
-
 /************************* MQTT settings *********************************/
-//connecting to 
-//#define AIO_SERVER      "io.adafruit.com"
-//#define AIO_SERVER      "tcp://10.0.0.16"
-#define AIO_SERVER      "10.0.0.16"
-#define AIO_SERVERPORT  1883                   // use 8883 for SSL
-//no password or username
+
+#include "../../../../../openHABsysfiles/password.h"
+//#define wifi_ssid "yourwifiSSID"
+//#define wifi_password "yourwifipassword"
+//#define mqtt_server "io.adafruit.com"
+//#define mqtt_server "yourmqttserverIP"
+#define mqtt_serverPORT  1883     // use 8883 for SSL
 #define AIO_USERNAME    ""
 #define AIO_KEY         ""
 
@@ -43,12 +40,12 @@ WiFiClient client;
 
 // Store the MQTT server, username, and password in flash memory.
 // This is required for using the Adafruit MQTT library.
-const char MQTT_SERVER[] PROGMEM    = AIO_SERVER;
+const char MQTT_SERVER[] PROGMEM    = mqtt_server;
 const char MQTT_USERNAME[] PROGMEM  = AIO_USERNAME;
 const char MQTT_PASSWORD[] PROGMEM  = AIO_KEY;
 
 // Setup the MQTT client class by passing in the WiFi client and MQTT server and login details.
-Adafruit_MQTT_Client mqtt(&client, MQTT_SERVER, AIO_SERVERPORT, MQTT_USERNAME, MQTT_PASSWORD);
+Adafruit_MQTT_Client mqtt(&client, MQTT_SERVER, mqtt_serverPORT, MQTT_USERNAME, MQTT_PASSWORD);
 
 /****************************** Feeds ***************************************/
 
