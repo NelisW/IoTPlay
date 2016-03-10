@@ -163,26 +163,33 @@ void loop() {
     client.publish("/sensor/humidity", h2 );
   }*/
 
-  int reading = digitalRead(12);
-  Serial.println(reading);
-  if (previousReading == LOW && reading == HIGH) {
-  counter++;
-  client.publish("testing/movement", "Motion!");
-  previousReading = reading;
-  //Serial.print("PIR ");
-  //Serial.print(counter);
-  //Serial.print("x Times! ");
-}
 
  if (tickOccured == true)
  {
+    tickOccured = false;
     if (! client.publish("testing/mqtttest", "yes!! Wow!!"))
     {
       Serial.println("Publish failed");
     };
     Serial.println("Tick Occurred");
-    tickOccured = false;
+
+
+    int reading = digitalRead(12);
+    Serial.println(reading);
+    Serial.println(previousReading);
+    Serial.println(" ");
+    if (previousReading == LOW && reading == HIGH) {
+      Serial.println("*** ");
+    counter++;
+    client.publish("testing/movement", "Motion!");
+    Serial.print("PIR ");
+    Serial.print(counter);
+    //Serial.print("x Times! ");
+
  }
+ previousReading = reading;
+
+}
 
 yield();  // or delay(0);
 }
