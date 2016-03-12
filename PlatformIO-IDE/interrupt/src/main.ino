@@ -29,6 +29,14 @@ extern "C"
 
 #define PIR0GPIO12D6 12  //PIR is on GPIO12, or D6 on the NodeMCU
 
+// the static IP address for the shield:
+//If you do OTA then also set the target IP address in platform.ini
+//[env:esp12e]
+//upload_port = 10.0.0.30
+IPAddress ipLocal(10, 0, 0, 30);
+IPAddress ipGateway(10, 0, 0, 2);
+IPAddress ipSubnetMask(255, 255, 255, 0);
+
 WiFiClient espClient;
 PubSubClient client(espClient);
 //int counter = 0;
@@ -43,16 +51,26 @@ void setup_wifi()
     // We start by connecting to a WiFi network
     Serial.print("Connecting to WiFi network: ");
     Serial.println(wifi_ssid);
+    WiFi.mode(WIFI_STA);
     WiFi.begin(wifi_ssid, wifi_password);
+    //set up the static IP
+    WiFi.config(ipLocal, ipGateway, ipSubnetMask);
+
     while (WiFi.status() != WL_CONNECTED)
     {
         delay(500);
         Serial.print(".");
     }
-
     Serial.println("WiFi connected");
     Serial.println("IP address: ");
     Serial.println(WiFi.localIP());
+
+    Serial.print("Sketch size:  ");
+    Serial.println(ESP.getSketchSize());
+    Serial.print("Flash size:   ");
+    Serial.println(ESP.getFlashChipSize());
+    Serial.print("Free size: ** ");
+    Serial.println(ESP.getFreeSketchSpace());
 }
 
 void reconnect()
@@ -143,11 +161,12 @@ void setup()
 
     Serial.begin(115200);
     Serial.println("");
-    Serial.println("--------------------------");
-    Serial.println("ESP8266 Timer Test");
-    Serial.println("--------------------------");
+    Serial.println("------------------------------");
+    Serial.println("ESP8266 Alarm withMQTT warnings");
+    Serial.println("------------------------------");
 
     setup_wifi();
+
     client.setServer(mqtt_server, 1883);
     client.setCallback(mqttCallback);
 
@@ -185,7 +204,7 @@ void loop()
     {
         PIR0Occured = false;
         publishMQTT("testing/movement", "Motion!");
-        Serial.println("PIR0 rising");
+        Serial.println("PIR0 rising edge");
     }
 
 
