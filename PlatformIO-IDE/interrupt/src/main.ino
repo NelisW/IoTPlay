@@ -1,30 +1,24 @@
-//
-// ESP8266 Timer Example
-// SwitchDoc Labs  October 2015
-//
-
 
 //install PubSubClient from http://platformio.org/#!/lib
 //download the tar file and untar into the project lib folder
+
+//ESP Pin interrupts are supported through attachInterrupt(), detachInterrupt()
+//functions. Interrupts may be attached to any GPIO pin except GPIO16,
+//but since GPIO6-GPIO11 are typically used to interface with the flash memory ICs
+//on most esp8266 modules, applying interrupts to these pins are likely to cause problems.
+//Standard Arduino interrupt types are supported: CHANGE, RISING, FALLING.
 
 
 //mosquitto_sub -v -d -t "testing/mqtttest"
 //mosquitto_sub -v -d -t "testing/+"
 
-extern "C" {
-#include "user_interface.h"
+extern "C"
+{
+    #include "user_interface.h"
 }
 
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
-
-//#include "DHT.h"
-//#define DHTPIN 13     // what digital pin we're connected to
-// Uncomment whatever type you're using!
-//#define DHTTYPE DHT11   // DHT 11
-//#define DHTTYPE DHT22   // DHT 22  (AM2302), AM2321
-//#define DHTTYPE DHT21   // DHT 21 (AM2301)
-//DHT dht(DHTPIN, DHTTYPE);
 
 #include "../../../../openHABsysfiles/password.h"
 //#define wifi_ssid "yourwifiSSID"
@@ -33,163 +27,167 @@ extern "C" {
 //#define mqtt_user "yourmqttserverusername"
 //#define mqtt_password "yourmqttserverpassword"
 
+#define PIR0GPIO12D6 12  //PIR is on GPIO12, or D6 on the NodeMCU
+
 WiFiClient espClient;
 PubSubClient client(espClient);
-int counter = 0;
+//int counter = 0;
 int previousReading = LOW;
-os_timer_t myTimer;
-bool tickOccured;
+os_timer_t aliveTimer;
+bool aliveTick;
+bool PIR0Occured;
 
-void setup_wifi() {
-  delay(10);
-  // We start by connecting to a WiFi network
-  Serial.print("Connecting to WiFi network: ");
-  Serial.println(wifi_ssid);
-  WiFi.begin(wifi_ssid, wifi_password);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-
-  Serial.println("WiFi connected");
-  Serial.println("IP address: ");
-  Serial.println(WiFi.localIP());
-}
-
-void reconnect() {
-  // Loop until we're reconnected
-  while (!client.connected()) {
-    Serial.print("Attempting MQTT connection...");
-    // Attempt to connect
-    // If you do not want to use a username and password, change next line to
-    if (client.connect("ESP8266Client")) {
-    ///if (client.connect("ESP8266Client", mqtt_user, mqtt_password)) {
-      Serial.println("connected");
-      // Once connected, publish an announcement...
-      client.publish("testing/mqtttest", "hello world");
-      // ... and resubscribe
-      client.subscribe("testing/espinput");
-    } else {
-      Serial.print("failed, rc=");
-      Serial.print(client.state());
-      Serial.println(" try again in 5 seconds");
-      // Wait 5 seconds before retrying
-      delay(5000);
-    }
-  }
-}
-
-
-// start of timerCallback
-void timerCallback(void *pArg)
+void setup_wifi()
 {
-      tickOccured = true;
+    delay(10);
+    // We start by connecting to a WiFi network
+    Serial.print("Connecting to WiFi network: ");
+    Serial.println(wifi_ssid);
+    WiFi.begin(wifi_ssid, wifi_password);
+    while (WiFi.status() != WL_CONNECTED)
+    {
+        delay(500);
+        Serial.print(".");
+    }
+
+    Serial.println("WiFi connected");
+    Serial.println("IP address: ");
+    Serial.println(WiFi.localIP());
+}
+
+void reconnect()
+{
+    // Loop until we're reconnected
+    while (!client.connected())
+    {
+        Serial.print("Attempting MQTT connection...");
+        // Attempt to connect
+        // If you do not want to use a username and password, change next line to
+        if (client.connect("ESP8266Client"))
+        {
+            ///if (client.connect("ESP8266Client", mqtt_user, mqtt_password))
+            Serial.println("connected");
+            // Once connected, publish an announcement...
+            client.publish("testing/mqtttest", "hello world");
+            // ... and resubscribe
+            client.subscribe("testing/espinput");
+        }
+        else
+        {
+            Serial.print("failed, rc=");
+            Serial.print(client.state());
+            Serial.println(" try again in 5 seconds");
+            // Wait 5 seconds before retrying
+            delay(5000);
+        }
+    }
+}
+
+
+
+void aliveTimerCallback(void *pArg)
+{
+    aliveTick = true;
+}
+
+void PIR0_ISR()
+{
+    PIR0Occured = true;
 }
 
 void user_init(void)
 {
-// Initialize the BUILTIN_LED pin as an output
-  pinMode(BUILTIN_LED, OUTPUT);
-  //PIR is on GPIO12, or D6 on the NodeMCU
-  pinMode(12, INPUT);
+    // Initialize the BUILTIN_LED pin as an output
+    pinMode(BUILTIN_LED, OUTPUT);
+
+    pinMode(PIR0GPIO12D6, INPUT);
 
     //Define a function to be called when the timer fires
-    os_timer_setfn(&myTimer, timerCallback, NULL);
+    os_timer_setfn(&aliveTimer, aliveTimerCallback, NULL);
     // Enable a millisecond granularity timer.
-    os_timer_arm(&myTimer, 1000, true);
-}
-
-void mqttCallback(char* topic, byte* payload, unsigned int length) {
-  Serial.print("Message arrived [");
-  Serial.print(topic);
-  Serial.print("] ");
-  for (int i = 0; i < length; i++) {
-    Serial.print((char)payload[i]);
-  }
-  Serial.println();
-
-  // Switch on the LED if an 1 was received as first character
-  if ((char)payload[0] == '1') {
-    digitalWrite(BUILTIN_LED, LOW);   // Turn the LED on (Note that LOW is the voltage level
-    // but actually the LED is on; this is because
-    // it is acive low on the ESP-01)
-  } else {
-    digitalWrite(BUILTIN_LED, HIGH);  // Turn the LED off by making the voltage HIGH
-  }
-}
-
-void setup() {
-
- Serial.begin(115200);
- Serial.println("");
- Serial.println("--------------------------");
- Serial.println("ESP8266 Timer Test");
- Serial.println("--------------------------");
-
- setup_wifi();
- client.setServer(mqtt_server, 1883);
- client.setCallback(mqttCallback);
-
- tickOccured = false;
- user_init();
-
- //dht.begin();
+    os_timer_arm(&aliveTimer, 5000, true);
+    aliveTick = false;
+    PIR0Occured = false;
 
 }
 
-void loop() {
-  if (!client.connected()) {
-    reconnect();
-  }
-  client.loop();
-
-  /*long now = millis();
-  if (now - lastMsg > 5000) {
-    lastMsg = now;
-    // Read humidity and temperature as Celsius (the default)
-    float h = dht.readHumidity();
-    float t = dht.readTemperature();
-
-    // Check if any reads failed and exit early (to try again).
-    if (isnan(h) || isnan(t)) {
-      Serial.println("Failed to read from DHT sensor!");
-      return;
-    }
-    char t2[50];
-    char h2[50];
-    dtostrf(t, 5, 2, t2);
-    dtostrf(h, 5, 2, h2);
-    client.publish("/sensor/temp", t2 );
-    client.publish("/sensor/humidity", h2 );
-  }*/
-
-
- if (tickOccured == true)
- {
-    tickOccured = false;
-    if (! client.publish("testing/mqtttest", "yes!! Wow!!"))
+void mqttCallback(const char* topic, const byte* payload, unsigned int length)
+{
+    Serial.print("Message arrived [");
+    Serial.print(topic);
+    Serial.print("] ");
+    for (int i = 0; i < length; i++)
     {
-      Serial.println("Publish failed");
-    };
-    Serial.println("Tick Occurred");
+        Serial.print((char)payload[i]);
+    }
+    Serial.println();
 
-
-    int reading = digitalRead(12);
-    Serial.println(reading);
-    Serial.println(previousReading);
-    Serial.println(" ");
-    if (previousReading == LOW && reading == HIGH) {
-      Serial.println("*** ");
-    counter++;
-    client.publish("testing/movement", "Motion!");
-    Serial.print("PIR ");
-    Serial.print(counter);
-    //Serial.print("x Times! ");
-
- }
- previousReading = reading;
-
+    // Switch on the LED if an 1 was received as first character
+    if ((char)payload[0] == '1')
+    {
+        digitalWrite(BUILTIN_LED, LOW);
+        // Turn the LED on (Note that LOW is the voltage level
+        // but actually the LED is on; this is because
+        // it is acive low on the ESP-01)
+    }
+    else
+    {
+        digitalWrite(BUILTIN_LED, HIGH);                     // Turn the LED off by making the voltage HIGH
+    }
 }
 
-yield();  // or delay(0);
+
+
+void setup()
+{
+
+    Serial.begin(115200);
+    Serial.println("");
+    Serial.println("--------------------------");
+    Serial.println("ESP8266 Timer Test");
+    Serial.println("--------------------------");
+
+    setup_wifi();
+    client.setServer(mqtt_server, 1883);
+    client.setCallback(mqttCallback);
+
+    attachInterrupt(PIR0GPIO12D6, PIR0_ISR, RISING);
+
+    user_init();
+}
+
+void publishMQTT(const char* topic, const char* payload)
+{
+    if (!client.publish(topic, payload))
+    {
+        Serial.print("Publish failed: ");
+        Serial.print(topic);
+        Serial.println(payload);
+    }
+}
+
+void loop()
+{
+    if (!client.connected())
+    {
+        reconnect();
+    }
+    client.loop();
+
+    if (aliveTick == true)
+    {
+        aliveTick = false;
+        publishMQTT("testing/mqtttest", "alive");
+        Serial.println("alive tick");
+    }
+
+    if (PIR0Occured == true)
+    {
+        PIR0Occured = false;
+        publishMQTT("testing/movement", "Motion!");
+        Serial.println("PIR0 rising");
+    }
+
+
+    yield();             // or delay(0);
 }
