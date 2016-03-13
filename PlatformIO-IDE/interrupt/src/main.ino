@@ -39,11 +39,9 @@ IPAddress ipSubnetMask(255, 255, 255, 0);
 
 WiFiClient espClient;
 PubSubClient client(espClient);
-//int counter = 0;
-int previousReading = LOW;
 os_timer_t aliveTimer;
-bool aliveTick;
-bool PIR0Occured;
+volatile bool aliveTick;   //flag set by ISR, must be volatile
+volatile bool PIR0Occured; //flag set by ISR, must be volatile
 
 void setup_wifi()
 {
@@ -121,8 +119,8 @@ void user_init(void)
     pinMode(PIR0GPIO12D6, INPUT);
 
     //Define a function to be called when the timer fires
+    os_timer_disarm(&aliveTimer);
     os_timer_setfn(&aliveTimer, aliveTimerCallback, NULL);
-    // Enable a millisecond granularity timer.
     os_timer_arm(&aliveTimer, 5000, true);
     aliveTick = false;
     PIR0Occured = false;
