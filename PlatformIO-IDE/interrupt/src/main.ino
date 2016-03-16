@@ -1,12 +1,5 @@
 
-//install PubSubClient from http://platformio.org/#!/lib
-//download the tar file and untar into the project lib folder
 
-//ESP Pin interrupts are supported through attachInterrupt(), detachInterrupt()
-//functions. Interrupts may be attached to any GPIO pin except GPIO16,
-//but since GPIO6-GPIO11 are typically used to interface with the flash memory ICs
-//on most esp8266 modules, applying interrupts to these pins are likely to cause problems.
-//Standard Arduino interrupt types are supported: CHANGE, RISING, FALLING.
 
 //See the documentation for this code here:
 //https://github.com/NelisW/myOpenHab/blob/master/docs/421-ESP-PIR-alarm.md
