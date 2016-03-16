@@ -31,9 +31,11 @@ extern "C"
 //#define mqtt_user "yourmqttserverusername"
 //#define mqtt_password "yourmqttserverpassword"
 
+#define LEDGPIO02D4 2  //LED is on GPIO02, or D4 on the NodeMCU
+
 #define PIR0GPIO12D6 12  //PIR0 is on GPIO12, or D6 on the NodeMCU
-#define PIR0GPIO13D7 13  //PIR1 is on GPIO13, or D7 on the NodeMCU
-#define PIR0GPIO14D5 14  //PIR2 is on GPIO14, or D5 on the NodeMCU
+#define PIR1GPIO13D7 13  //PIR1 is on GPIO13, or D7 on the NodeMCU
+#define PIR2GPIO14D5 14  //PIR2 is on GPIO14, or D5 on the NodeMCU
 
 // start fixed IP block
 //If you do OTA then also set the target IP address in platform.ini
@@ -57,6 +59,14 @@ void aliveTimerCallback(void *pArg){aliveTick = true;}
 void PIR0_ISR(){PIR0Occured = true;}
 void PIR1_ISR(){PIR1Occured = true;}
 void PIR2_ISR(){PIR2Occured = true;}
+volatile bool LEDOn; //status of the led
+
+//This function is called when any PIR triggers.
+void PIR_LED_ON()
+{
+    LEDOn = true; //signals LED to switch on
+    //Start a one shot timer that will switch off later
+};
 
 void setup_wifi()
 {
@@ -140,12 +150,12 @@ void reconnect()
 
 void user_init(void)
 {
-    // Initialize the BUILTIN_LED pin as an output
-    pinMode(BUILTIN_LED, OUTPUT);
+    // Initialize the LED pin as an output
+    pinMode(LEDGPIO02D4, OUTPUT);
 
     pinMode(PIR0GPIO12D6, INPUT);
-    pinMode(PIR0GPIO13D7, INPUT);
-    pinMode(PIR0GPIO14D5, INPUT);
+    pinMode(PIR1GPIO13D7, INPUT);
+    pinMode(PIR2GPIO14D5, INPUT);
 
     //Define a function to be called when the timer fires
     os_timer_disarm(&aliveTimer);
@@ -155,6 +165,7 @@ void user_init(void)
     PIR0Occured = false;
     PIR1Occured = false;
     PIR2Occured = false;
+    LEDOn = false;
 
 }
 
@@ -164,29 +175,19 @@ void mqttCallback(const char* topic, const byte* payload, unsigned int length)
     Serial.print(topic);
     Serial.print("] ");
     for (int i = 0; i < length; i++)
-    {
-        Serial.print((char)payload[i]);
-    }
+    {Serial.print((char)payload[i]);}
     Serial.println();
 
     // Switch on the LED if an 1 was received as first character
-    if ((char)payload[0] == '1')
-    {
-        digitalWrite(BUILTIN_LED, LOW);
-        // Turn the LED on (Note that LOW is the voltage level
-        // but actually the LED is on; this is because
-        // it is acive low on the ESP-01)
-    }
-    else
-    {
-        digitalWrite(BUILTIN_LED, HIGH);                     // Turn the LED off by making the voltage HIGH
-    }
+    if ((char)payload[0] == '1'){LEDOn = true;}
+    else{LEDOn = false;}
 }
 
 
 
 void setup()
 {
+    digitalWrite(LEDGPIO02D4, LOW);
 
     Serial.begin(115200);
     Serial.println("");
@@ -200,8 +201,8 @@ void setup()
     client.setCallback(mqttCallback);
 
     attachInterrupt(PIR0GPIO12D6, PIR0_ISR, RISING);
-    attachInterrupt(PIR0GPIO13D7, PIR1_ISR, RISING);
-    attachInterrupt(PIR0GPIO14D5, PIR2_ISR, RISING);
+    attachInterrupt(PIR1GPIO13D7, PIR1_ISR, RISING);
+    attachInterrupt(PIR2GPIO14D5, PIR2_ISR, RISING);
 
     user_init();
 }
@@ -238,6 +239,7 @@ void loop()
     if (PIR0Occured == true)
     {
         PIR0Occured = false;
+        PIR_LED_ON();
         publishMQTT("alarmW/movement", "Motion 0!");
         Serial.println("PIR0 rising edge");
     }
@@ -245,6 +247,7 @@ void loop()
     if (PIR1Occured == true)
     {
         PIR1Occured = false;
+        PIR_LED_ON();
         publishMQTT("alarmW/movement", "Motion 1!");
         Serial.println("PIR1 rising edge");
     }
@@ -252,9 +255,13 @@ void loop()
     if (PIR2Occured == true)
     {
         PIR2Occured = false;
+        PIR_LED_ON();
         publishMQTT("alarmW/movement", "Motion 2!");
         Serial.println("PIR2 rising edge");
     }
+
+    if (LEDOn == true) { digitalWrite(LEDGPIO02D4, HIGH); }
+    else{ digitalWrite(LEDGPIO02D4, LOW); }
 
 
     yield();             // or delay(0);
