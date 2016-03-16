@@ -8,9 +8,8 @@
 //on most esp8266 modules, applying interrupts to these pins are likely to cause problems.
 //Standard Arduino interrupt types are supported: CHANGE, RISING, FALLING.
 
-
-//mosquitto_sub -v -d -t "testing/mqtttest"
-//mosquitto_sub -v -d -t "testing/+"
+//See the documentation for this code here:
+//https://github.com/NelisW/myOpenHab/blob/master/docs/421-ESP-PIR-alarm.md
 
 extern "C"
 {
@@ -19,6 +18,18 @@ extern "C"
 
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
+// start OTA block
+#include <ESP8266mDNS.h>
+#include <WiFiUdp.h>
+#include <ArduinoOTA.h>
+// end OTA block
+
+// start fixed IP block
+//put the following in platformio.ini:
+//upload_port = 10.0.0.30
+//this will tell platformio to use the wifi to upload
+//uncomment the line in platformio.ini to disable OTA and use USB
+// end fixed IP block
 
 #include "../../../../openHABsysfiles/password.h"
 //#define wifi_ssid "yourwifiSSID"
@@ -27,21 +38,26 @@ extern "C"
 //#define mqtt_user "yourmqttserverusername"
 //#define mqtt_password "yourmqttserverpassword"
 
-#define PIR0GPIO12D6 12  //PIR is on GPIO12, or D6 on the NodeMCU
+#define PIR0GPIO12D6 12  //PIR0 is on GPIO12, or D6 on the NodeMCU
+#define PIR0GPIO13D7 13  //PIR1 is on GPIO13, or D7 on the NodeMCU
+#define PIR0GPIO14D5 14  //PIR2 is on GPIO14, or D5 on the NodeMCU
 
-// the static IP address for the shield:
+// start fixed IP block
 //If you do OTA then also set the target IP address in platform.ini
 //[env:esp12e]
 //upload_port = 10.0.0.30
 IPAddress ipLocal(10, 0, 0, 30);
 IPAddress ipGateway(10, 0, 0, 2);
 IPAddress ipSubnetMask(255, 255, 255, 0);
+// end fixed IP block
 
 WiFiClient espClient;
 PubSubClient client(espClient);
 os_timer_t aliveTimer;
 volatile bool aliveTick;   //flag set by ISR, must be volatile
 volatile bool PIR0Occured; //flag set by ISR, must be volatile
+volatile bool PIR1Occured; //flag set by ISR, must be volatile
+volatile bool PIR2Occured; //flag set by ISR, must be volatile
 
 void setup_wifi()
 {
@@ -51,8 +67,31 @@ void setup_wifi()
     Serial.println(wifi_ssid);
     WiFi.mode(WIFI_STA);
     WiFi.begin(wifi_ssid, wifi_password);
+    // start fixed IP block
     //set up the static IP
     WiFi.config(ipLocal, ipGateway, ipSubnetMask);
+    // end fixed IP block
+
+//start OTA block
+    ArduinoOTA.onStart([]() {
+      Serial.println("Start");
+    });
+    ArduinoOTA.onEnd([]() {
+      Serial.println("\nEnd");
+    });
+    ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+      Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+    });
+    ArduinoOTA.onError([](ota_error_t error) {
+      Serial.printf("Error[%u]: ", error);
+      if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+      else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
+      else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+      else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+      else if (error == OTA_END_ERROR) Serial.println("End Failed");
+    });
+    ArduinoOTA.begin();
+//end OTA block
 
     while (WiFi.status() != WL_CONNECTED)
     {
@@ -84,9 +123,9 @@ void reconnect()
             ///if (client.connect("ESP8266Client", mqtt_user, mqtt_password))
             Serial.println("connected");
             // Once connected, publish an announcement...
-            client.publish("testing/mqtttest", "hello world");
+            client.publish("alarmW/mqtttest", "hello world");
             // ... and resubscribe
-            client.subscribe("testing/espinput");
+            client.subscribe("alarmW/espinput");
         }
         else
         {
@@ -100,16 +139,11 @@ void reconnect()
 }
 
 
-
-void aliveTimerCallback(void *pArg)
-{
-    aliveTick = true;
-}
-
-void PIR0_ISR()
-{
-    PIR0Occured = true;
-}
+//Interrupt and timer callbacks
+void aliveTimerCallback(void *pArg){aliveTick = true;}
+void PIR0_ISR(){PIR0Occured = true;}
+void PIR1_ISR(){PIR1Occured = true;}
+void PIR2_ISR(){PIR2Occured = true;}
 
 void user_init(void)
 {
@@ -117,6 +151,8 @@ void user_init(void)
     pinMode(BUILTIN_LED, OUTPUT);
 
     pinMode(PIR0GPIO12D6, INPUT);
+    pinMode(PIR0GPIO13D7, INPUT);
+    pinMode(PIR0GPIO14D5, INPUT);
 
     //Define a function to be called when the timer fires
     os_timer_disarm(&aliveTimer);
@@ -124,6 +160,8 @@ void user_init(void)
     os_timer_arm(&aliveTimer, 5000, true);
     aliveTick = false;
     PIR0Occured = false;
+    PIR1Occured = false;
+    PIR2Occured = false;
 
 }
 
@@ -159,9 +197,9 @@ void setup()
 
     Serial.begin(115200);
     Serial.println("");
-    Serial.println("------------------------------");
-    Serial.println("ESP8266 Alarm withMQTT warnings");
-    Serial.println("------------------------------");
+    Serial.println("-------------------------------");
+    Serial.println("ESP8266 Alarm with MQTT warnings");
+    Serial.println("-------------------------------");
 
     setup_wifi();
 
@@ -169,6 +207,8 @@ void setup()
     client.setCallback(mqttCallback);
 
     attachInterrupt(PIR0GPIO12D6, PIR0_ISR, RISING);
+    attachInterrupt(PIR0GPIO13D7, PIR1_ISR, RISING);
+    attachInterrupt(PIR0GPIO14D5, PIR2_ISR, RISING);
 
     user_init();
 }
@@ -185,6 +225,10 @@ void publishMQTT(const char* topic, const char* payload)
 
 void loop()
 {
+    // Start OTA block
+    ArduinoOTA.handle();
+    // end OTA block
+
     if (!client.connected())
     {
         reconnect();
@@ -194,15 +238,29 @@ void loop()
     if (aliveTick == true)
     {
         aliveTick = false;
-        publishMQTT("testing/mqtttest", "alive");
+        publishMQTT("alarmW/mqtttest", "alive");
         Serial.println("alive tick");
     }
 
     if (PIR0Occured == true)
     {
         PIR0Occured = false;
-        publishMQTT("testing/movement", "Motion!");
+        publishMQTT("alarmW/movement", "Motion 0!");
         Serial.println("PIR0 rising edge");
+    }
+
+    if (PIR1Occured == true)
+    {
+        PIR1Occured = false;
+        publishMQTT("alarmW/movement", "Motion 1!");
+        Serial.println("PIR1 rising edge");
+    }
+
+    if (PIR2Occured == true)
+    {
+        PIR2Occured = false;
+        publishMQTT("alarmW/movement", "Motion 2!");
+        Serial.println("PIR2 rising edge");
     }
 
 
