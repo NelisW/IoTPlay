@@ -46,11 +46,17 @@ IPAddress ipSubnetMask(255, 255, 255, 0);
 
 WiFiClient espClient;
 PubSubClient client(espClient);
-os_timer_t aliveTimer;
+
+//Interrupt and timer callbacks and flags
 volatile bool aliveTick;   //flag set by ISR, must be volatile
 volatile bool PIR0Occured; //flag set by ISR, must be volatile
 volatile bool PIR1Occured; //flag set by ISR, must be volatile
 volatile bool PIR2Occured; //flag set by ISR, must be volatile
+os_timer_t aliveTimer;
+void aliveTimerCallback(void *pArg){aliveTick = true;}
+void PIR0_ISR(){PIR0Occured = true;}
+void PIR1_ISR(){PIR1Occured = true;}
+void PIR2_ISR(){PIR2Occured = true;}
 
 void setup_wifi()
 {
@@ -61,7 +67,6 @@ void setup_wifi()
     WiFi.mode(WIFI_STA);
     WiFi.begin(wifi_ssid, wifi_password);
     // start fixed IP block
-    //set up the static IP
     WiFi.config(ipLocal, ipGateway, ipSubnetMask);
     // end fixed IP block
 
@@ -132,11 +137,6 @@ void reconnect()
 }
 
 
-//Interrupt and timer callbacks
-void aliveTimerCallback(void *pArg){aliveTick = true;}
-void PIR0_ISR(){PIR0Occured = true;}
-void PIR1_ISR(){PIR1Occured = true;}
-void PIR2_ISR(){PIR2Occured = true;}
 
 void user_init(void)
 {
