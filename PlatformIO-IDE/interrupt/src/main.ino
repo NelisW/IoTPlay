@@ -31,11 +31,13 @@ extern "C"
 //#define mqtt_user "yourmqttserverusername"
 //#define mqtt_password "yourmqttserverpassword"
 
-#define LEDGPIO02D4 2  //LED is on GPIO02, or D4 on the NodeMCU
-
 #define PIR0GPIO12D6 12  //PIR0 is on GPIO12, or D6 on the NodeMCU
 #define PIR1GPIO13D7 13  //PIR1 is on GPIO13, or D7 on the NodeMCU
 #define PIR2GPIO14D5 14  //PIR2 is on GPIO14, or D5 on the NodeMCU
+
+#define LEDGPIO02D4 2  //LED is on GPIO02, or D4 on the NodeMCU
+const int LEDPIRTimeOn = 1000U; //millisecs
+const int LEDCtlTimeOn = 3000U; //millisecs
 
 // start fixed IP block
 //If you do OTA then also set the target IP address in platform.ini
@@ -55,17 +57,35 @@ volatile bool PIR0Occured; //flag set by ISR, must be volatile
 volatile bool PIR1Occured; //flag set by ISR, must be volatile
 volatile bool PIR2Occured; //flag set by ISR, must be volatile
 os_timer_t aliveTimer;
-void aliveTimerCallback(void *pArg){aliveTick = true;}
+os_timer_t LEDPIRTimer;
+os_timer_t LEDCtlTimer;
 void PIR0_ISR(){PIR0Occured = true;}
 void PIR1_ISR(){PIR1Occured = true;}
 void PIR2_ISR(){PIR2Occured = true;}
-volatile bool LEDOn; //status of the led
+volatile bool LEDPIROn; //LED on via PIR status flag
+volatile bool LEDCtlOn; //LED on via MQTT status flag
 
-//This function is called when any PIR triggers.
+// when alive timer elapses: signal alive tick
+void aliveTimerCallback(void *pArg){aliveTick = true;}
+
+// when LED PIR timer elapses: LED off
+void LEDPIRTimerCallback(void *pArg)
+{
+    LEDPIROn = false;
+}
+
+// when LED Ctl timer elapses: LED off
+void LEDCtlTimerCallback(void *pArg)
+{
+    LEDCtlOn = false;
+}
+
+
+// when any PIR triggers: Led on & start one-shot timer to switch off later
 void PIR_LED_ON()
 {
-    LEDOn = true; //signals LED to switch on
-    //Start a one shot timer that will switch off later
+    LEDPIROn = true;
+    os_timer_arm(&LEDPIRTimer, LEDPIRTimeOn, false);
 };
 
 void setup_wifi()
@@ -133,7 +153,7 @@ void reconnect()
             // Once connected, publish an announcement...
             client.publish("alarmW/mqtttest", "hello world");
             // ... and resubscribe
-            client.subscribe("alarmW/espinput");
+            client.subscribe("alarmW/LEDCtlOn");
         }
         else
         {
@@ -145,7 +165,6 @@ void reconnect()
         }
     }
 }
-
 
 
 void user_init(void)
@@ -161,12 +180,19 @@ void user_init(void)
     os_timer_disarm(&aliveTimer);
     os_timer_setfn(&aliveTimer, aliveTimerCallback, NULL);
     os_timer_arm(&aliveTimer, 5000, true);
+
+    os_timer_disarm(&LEDPIRTimer);
+    os_timer_setfn(&LEDPIRTimer, LEDPIRTimerCallback, NULL);
+
+    os_timer_disarm(&LEDCtlTimer);
+    os_timer_setfn(&LEDCtlTimer, LEDCtlTimerCallback, NULL);
+
     aliveTick = false;
     PIR0Occured = false;
     PIR1Occured = false;
     PIR2Occured = false;
-    LEDOn = false;
-
+    LEDPIROn = false;
+    LEDCtlOn = false;
 }
 
 void mqttCallback(const char* topic, const byte* payload, unsigned int length)
@@ -178,9 +204,14 @@ void mqttCallback(const char* topic, const byte* payload, unsigned int length)
     {Serial.print((char)payload[i]);}
     Serial.println();
 
-    // Switch on the LED if an 1 was received as first character
-    if ((char)payload[0] == '1'){LEDOn = true;}
-    else{LEDOn = false;}
+    // Switch on the LED if a 1 was received as first character
+    // also activate the timer to switch off after some time
+    if ((char)payload[0] == '1')
+    {
+        LEDCtlOn = true;
+        os_timer_arm(&LEDCtlTimer, LEDCtlTimeOn, false);
+    }
+    else{LEDCtlOn = false;}
 }
 
 
@@ -193,7 +224,6 @@ void setup()
     Serial.println("");
     Serial.println("-------------------------------");
     Serial.println("ESP8266 Alarm with MQTT warnings");
-    Serial.println("-------------------------------");
 
     setup_wifi();
 
@@ -232,35 +262,31 @@ void loop()
     if (aliveTick == true)
     {
         aliveTick = false;
-        publishMQTT("alarmW/mqtttest", "alive");
-        Serial.println("alive tick");
+        publishMQTT("alarmW/alive", "1");
     }
 
     if (PIR0Occured == true)
     {
         PIR0Occured = false;
         PIR_LED_ON();
-        publishMQTT("alarmW/movement", "Motion 0!");
-        Serial.println("PIR0 rising edge");
+        publishMQTT("alarmW/movement/PIR0", "1");
     }
 
     if (PIR1Occured == true)
     {
         PIR1Occured = false;
         PIR_LED_ON();
-        publishMQTT("alarmW/movement", "Motion 1!");
-        Serial.println("PIR1 rising edge");
+        publishMQTT("alarmW/movement/PIR1", "1");
     }
 
     if (PIR2Occured == true)
     {
         PIR2Occured = false;
         PIR_LED_ON();
-        publishMQTT("alarmW/movement", "Motion 2!");
-        Serial.println("PIR2 rising edge");
+        publishMQTT("alarmW/movement/PIR2", "1");
     }
 
-    if (LEDOn == true) { digitalWrite(LEDGPIO02D4, HIGH); }
+    if (LEDPIROn == true || LEDCtlOn == true) { digitalWrite(LEDGPIO02D4, HIGH); }
     else{ digitalWrite(LEDGPIO02D4, LOW); }
 
 
