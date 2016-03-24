@@ -17,6 +17,7 @@ extern "C"
 #include <ArduinoOTA.h>
 // end OTA block
 
+
 // start fixed IP block
 //put the following in platformio.ini:
 //upload_port = 10.0.0.30
@@ -153,7 +154,7 @@ void reconnect()
             // Once connected, publish an announcement...
             client.publish("alarmW/mqtttest", "hello world");
             // ... and resubscribe
-            client.subscribe("alarmW/LEDCtlOn");
+            client.subscribe("alarmW/control/LEDCtlOn");
         }
         else
         {
