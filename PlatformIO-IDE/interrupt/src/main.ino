@@ -1,6 +1,3 @@
-
-
-
 //See the documentation for this code here:
 //https://github.com/NelisW/myOpenHab/blob/master/docs/421-ESP-PIR-alarm.md
 
@@ -16,6 +13,9 @@ extern "C"
 #include <WiFiUdp.h>
 #include <ArduinoOTA.h>
 // end OTA block
+//start time block
+#include <time.h>
+//end time block
 
 
 // start fixed IP block
@@ -32,13 +32,19 @@ extern "C"
 //#define mqtt_user "yourmqttserverusername"
 //#define mqtt_password "yourmqttserverpassword"
 
+const int numFAsamples = 2; // must get this number of triggers
+const int timFAsamples = 10; // in this time (sec)
+const int LEDPIRTimeOn = 1000U; //millisecs
+const int LEDCtlTimeOn = 3000U; //millisecs
+time_t timeout[numFAsamples]; //keep count of alarm triggers
+int timeoutcounter;
+
 #define PIR0GPIO12D6 12  //PIR0 is on GPIO12, or D6 on the NodeMCU
 #define PIR1GPIO13D7 13  //PIR1 is on GPIO13, or D7 on the NodeMCU
 #define PIR2GPIO14D5 14  //PIR2 is on GPIO14, or D5 on the NodeMCU
 
 #define LEDGPIO02D4 2  //LED is on GPIO02, or D4 on the NodeMCU
-const int LEDPIRTimeOn = 1000U; //millisecs
-const int LEDCtlTimeOn = 3000U; //millisecs
+
 
 // start fixed IP block
 //If you do OTA then also set the target IP address in platform.ini
@@ -50,7 +56,7 @@ IPAddress ipSubnetMask(255, 255, 255, 0);
 // end fixed IP block
 
 WiFiClient espClient;
-PubSubClient client(espClient);
+PubSubClient mqttclient(espClient);
 
 //Interrupt and timer callbacks and flags
 volatile bool aliveTick;   //flag set by ISR, must be volatile
@@ -146,24 +152,24 @@ void setup_wifi()
 void reconnect()
 {
     // Loop until we're reconnected
-    while (!client.connected())
+    while (!mqttclient.connected())
     {
         Serial.print("Attempting MQTT connection...");
         // Attempt to connect
         // If you do not want to use a username and password, change next line to
-        if (client.connect("ESP8266Client"))
+        if (mqttclient.connect("ESP8266Client"))
         {
-            ///if (client.connect("ESP8266Client", mqtt_user, mqtt_password))
+            ///if (mqttclient.connect("ESP8266Client", mqtt_user, mqtt_password))
             Serial.println("connected");
             // Once connected, publish an announcement...
-            client.publish("alarmW/mqtttest", "hello world");
+            mqttclient.publish("alarmW/alive", "hello world");
             // ... and resubscribe
-            client.subscribe("alarmW/control/LEDCtlOn");
+            mqttclient.subscribe("alarmW/control/LEDCtlOn");
         }
         else
         {
             Serial.print("failed, rc=");
-            Serial.print(client.state());
+            Serial.print(mqttclient.state());
             Serial.println(" try again in 5 seconds");
             // Wait 5 seconds before retrying
             delay(5000);
@@ -171,6 +177,30 @@ void reconnect()
     }
 }
 
+void synchroniseLocalTime()
+{
+    //start time block
+    //get the current wall clock time from time servers
+    //we are not overly concerned with the real time,
+    //just do it as init values.
+    if (WiFi.status() == WL_CONNECTED)
+    {
+        //my timezone is 2 hours ahead of GMT
+        configTime(2 * 3600, 0, "pool.ntp.org", "time.nist.gov");
+        Serial.println("\nWaiting for time");
+        while (!time(nullptr))
+            {
+              Serial.print(".");
+              delay(1000);
+            }
+        time_t now = time(nullptr);
+        //Serial.println(now);
+        Serial.println(ctime(&now));
+        Serial.println("");
+        publishMQTT("alarmW/timesynchronised", ctime(&now));
+    }
+    //end time block
+}
 
 void user_init(void)
 {
@@ -198,7 +228,20 @@ void user_init(void)
     PIR2Occured = false;
     LEDPIROn = false;
     LEDCtlOn = false;
+
+    attachInterrupt(PIR0GPIO12D6, PIR0_ISR, RISING);
+    attachInterrupt(PIR1GPIO13D7, PIR1_ISR, RISING);
+    attachInterrupt(PIR2GPIO14D5, PIR2_ISR, RISING);
+
+    for(int i=0; i<numFAsamples;i++)
+    {
+        timeout[i] = 1000 * (i + 1);
+    }
+    timeoutcounter = 0;
+
+    synchroniseLocalTime();
 }
+
 
 void mqttCallback(const char* topic, const byte* payload, unsigned int length)
 {
@@ -232,19 +275,15 @@ void setup()
 
     setup_wifi();
 
-    client.setServer(mqtt_server, 1883);
-    client.setCallback(mqttCallback);
-
-    attachInterrupt(PIR0GPIO12D6, PIR0_ISR, RISING);
-    attachInterrupt(PIR1GPIO13D7, PIR1_ISR, RISING);
-    attachInterrupt(PIR2GPIO14D5, PIR2_ISR, RISING);
+    mqttclient.setServer(mqtt_server, 1883);
+    mqttclient.setCallback(mqttCallback);
 
     user_init();
 }
 
 void publishMQTT(const char* topic, const char* payload)
 {
-    if (!client.publish(topic, payload))
+    if (!mqttclient.publish(topic, payload))
     {
         Serial.print("Publish failed: ");
         Serial.print(topic);
@@ -252,22 +291,33 @@ void publishMQTT(const char* topic, const char* payload)
     }
 }
 
+
 void loop()
 {
     // Start OTA block
     ArduinoOTA.handle();
     // end OTA block
 
-    if (!client.connected())
+    if (!mqttclient.connected())
     {
         reconnect();
     }
-    client.loop();
+    mqttclient.loop();
 
     if (aliveTick == true)
     {
         aliveTick = false;
         publishMQTT("alarmW/alive", "1");
+
+        //start time block
+        //around midday sync with the NTP server
+        time_t now = time(nullptr);
+        struct tm* p_tm = localtime(&now);
+        if (p_tm->tm_hour==12 && p_tm->tm_min==0 && p_tm->tm_sec<6)
+        {
+            synchroniseLocalTime();
+        }
+        //end time block
     }
 
     if (PIR0Occured == true)
@@ -282,7 +332,14 @@ void loop()
         if (msg0[0]+msg0[1] > 96)
         {
             publishMQTT("alarmW/movement/PIR", "01*");
+            timeout[(timeoutcounter+numFAsamples) % numFAsamples] = time(nullptr);
+            timeoutcounter++;
         }
+        // else
+        // {
+        //     timeout[(timeoutcounter+numFAsamples) % numFAsamples] = 0;
+        //     timeoutcounter++;
+        // }
     }
 
     if (PIR1Occured == true)
@@ -296,7 +353,14 @@ void loop()
         if (msg1[0]+msg1[1] > 96)
         {
             publishMQTT("alarmW/movement/PIR", "01*");
+            timeout[(timeoutcounter+numFAsamples) % numFAsamples] = time(nullptr);
+            timeoutcounter++;
         }
+        // else
+        // {
+        //     timeout[(timeoutcounter+numFAsamples) % numFAsamples] = 0;
+        //     timeoutcounter++;
+        // }
     }
 
     if (PIR2Occured == true)
@@ -309,14 +373,37 @@ void loop()
         publishMQTT("alarmW/movement/PIR", msg2);
     }
 
-    //if (msg0[0]+msg0[1] > 64 || msg1[0]+msg1[1] > 64 )
-    //{
-        //publishMQTT("alarmW/movement/PIR", "01");
-    //}
+    //prevent timeoutcounter from running away
+    if (timeoutcounter >= 2*numFAsamples) timeoutcounter=0;
+
+    //count the number of too short intervals
+    int sum = 0;
+    for (int i=0; i<numFAsamples; i++)
+    {
+        if (time(nullptr) - timeout[i] < timFAsamples) sum++;
+        Serial.println(time(nullptr) - timeout[i]);
+    }
+    //raise alarm if all cases too recent
+    if (sum==numFAsamples)
+    {
+        publishMQTT("alarmW/movement/PIR", "alarm");
+        for (int i=0; i<numFAsamples; i++)
+        {
+            timeout[i] = 0;
+        }
+    }
+
+
+
+    // timeout
+    // const int numFAsamples = 3; // must get this number of triggers
+    // const int timFAsamples = 15; // in this time (sec)
+    // timeoutcounter = 0;
+
 
     if (LEDPIROn == true || LEDCtlOn == true) { digitalWrite(LEDGPIO02D4, HIGH); }
     else{ digitalWrite(LEDGPIO02D4, LOW); }
 
 
-    yield();             // or delay(0);
+    yield();  // or delay(0);
 }
