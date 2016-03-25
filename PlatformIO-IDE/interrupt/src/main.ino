@@ -278,8 +278,11 @@ void loop()
         msg0[0] = '0';
         msg0[1] = digitalRead(PIR1GPIO13D7) ? '1':' ';
         msg0[2] = digitalRead(PIR2GPIO14D5) ? '2':' ';
-
         publishMQTT("alarmW/movement/PIR", msg0);
+        if (msg0[0]+msg0[1] > 96)
+        {
+            publishMQTT("alarmW/movement/PIR", "01*");
+        }
     }
 
     if (PIR1Occured == true)
@@ -290,6 +293,10 @@ void loop()
         msg1[1] = '1';
         msg1[2] = digitalRead(PIR2GPIO14D5) ? '2':' ';
         publishMQTT("alarmW/movement/PIR", msg1);
+        if (msg1[0]+msg1[1] > 96)
+        {
+            publishMQTT("alarmW/movement/PIR", "01*");
+        }
     }
 
     if (PIR2Occured == true)
@@ -301,6 +308,11 @@ void loop()
         msg2[2] = '2';
         publishMQTT("alarmW/movement/PIR", msg2);
     }
+
+    //if (msg0[0]+msg0[1] > 64 || msg1[0]+msg1[1] > 64 )
+    //{
+        //publishMQTT("alarmW/movement/PIR", "01");
+    //}
 
     if (LEDPIROn == true || LEDCtlOn == true) { digitalWrite(LEDGPIO02D4, HIGH); }
     else{ digitalWrite(LEDGPIO02D4, LOW); }
