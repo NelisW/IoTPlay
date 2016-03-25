@@ -34,10 +34,12 @@ extern "C"
 
 const int numFAsamples = 2; // must get this number of triggers
 const int timFAsamples = 10; // in this time (sec)
-const int LEDPIRTimeOn = 1000U; //millisecs
-const int LEDCtlTimeOn = 3000U; //millisecs
+const int aliveTimout  = 60000;//millisecs
+const int LEDPIRTimeOn = 1000; // 300000 millisecs
+const int LEDCtlTimeOn = 3000; //7200000 millisecs
 time_t timeout[numFAsamples]; //keep count of alarm triggers
 int timeoutcounter;
+
 
 #define PIR0GPIO12D6 12  //PIR0 is on GPIO12, or D6 on the NodeMCU
 #define PIR1GPIO13D7 13  //PIR1 is on GPIO13, or D7 on the NodeMCU
@@ -206,6 +208,7 @@ void user_init(void)
 {
     // Initialize the LED pin as an output
     pinMode(LEDGPIO02D4, OUTPUT);
+    digitalWrite(LEDGPIO02D4, LOW);
 
     pinMode(PIR0GPIO12D6, INPUT);
     pinMode(PIR1GPIO13D7, INPUT);
@@ -214,7 +217,7 @@ void user_init(void)
     //Define a function to be called when the timer fires
     os_timer_disarm(&aliveTimer);
     os_timer_setfn(&aliveTimer, aliveTimerCallback, NULL);
-    os_timer_arm(&aliveTimer, 5000, true);
+    os_timer_arm(&aliveTimer, aliveTimout, true);
 
     os_timer_disarm(&LEDPIRTimer);
     os_timer_setfn(&LEDPIRTimer, LEDPIRTimerCallback, NULL);
@@ -266,7 +269,6 @@ void mqttCallback(const char* topic, const byte* payload, unsigned int length)
 
 void setup()
 {
-    digitalWrite(LEDGPIO02D4, LOW);
 
     Serial.begin(115200);
     Serial.println("");
@@ -277,6 +279,10 @@ void setup()
 
     mqttclient.setServer(mqtt_server, 1883);
     mqttclient.setCallback(mqttCallback);
+    if (!mqttclient.connected())
+    {
+        reconnect();
+    }
 
     user_init();
 }
@@ -313,7 +319,7 @@ void loop()
         //around midday sync with the NTP server
         time_t now = time(nullptr);
         struct tm* p_tm = localtime(&now);
-        if (p_tm->tm_hour==12 && p_tm->tm_min==0 && p_tm->tm_sec<6)
+        if (p_tm->tm_hour==12 && p_tm->tm_min==0 && p_tm->tm_sec<aliveTimout/1000)
         {
             synchroniseLocalTime();
         }
@@ -335,11 +341,6 @@ void loop()
             timeout[(timeoutcounter+numFAsamples) % numFAsamples] = time(nullptr);
             timeoutcounter++;
         }
-        // else
-        // {
-        //     timeout[(timeoutcounter+numFAsamples) % numFAsamples] = 0;
-        //     timeoutcounter++;
-        // }
     }
 
     if (PIR1Occured == true)
@@ -356,11 +357,6 @@ void loop()
             timeout[(timeoutcounter+numFAsamples) % numFAsamples] = time(nullptr);
             timeoutcounter++;
         }
-        // else
-        // {
-        //     timeout[(timeoutcounter+numFAsamples) % numFAsamples] = 0;
-        //     timeoutcounter++;
-        // }
     }
 
     if (PIR2Occured == true)
@@ -381,25 +377,17 @@ void loop()
     for (int i=0; i<numFAsamples; i++)
     {
         if (time(nullptr) - timeout[i] < timFAsamples) sum++;
-        Serial.println(time(nullptr) - timeout[i]);
     }
     //raise alarm if all cases too recent
     if (sum==numFAsamples)
     {
         publishMQTT("alarmW/movement/PIR", "alarm");
+        //once alarm raised, clear history and start afresh
         for (int i=0; i<numFAsamples; i++)
         {
             timeout[i] = 0;
         }
     }
-
-
-
-    // timeout
-    // const int numFAsamples = 3; // must get this number of triggers
-    // const int timFAsamples = 15; // in this time (sec)
-    // timeoutcounter = 0;
-
 
     if (LEDPIROn == true || LEDCtlOn == true) { digitalWrite(LEDGPIO02D4, HIGH); }
     else{ digitalWrite(LEDGPIO02D4, LOW); }
