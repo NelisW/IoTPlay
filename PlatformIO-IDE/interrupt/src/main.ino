@@ -57,8 +57,13 @@ volatile bool aliveTick;   //flag set by ISR, must be volatile
 volatile bool PIR0Occured; //flag set by ISR, must be volatile
 volatile bool PIR1Occured; //flag set by ISR, must be volatile
 volatile bool PIR2Occured; //flag set by ISR, must be volatile
+char msg0[4] = "   ";
+char msg1[4] = "   ";
+char msg2[4] = "   ";
+
 os_timer_t aliveTimer;
 os_timer_t LEDPIRTimer;
+
 os_timer_t LEDCtlTimer;
 void PIR0_ISR(){PIR0Occured = true;}
 void PIR1_ISR(){PIR1Occured = true;}
@@ -80,7 +85,6 @@ void LEDCtlTimerCallback(void *pArg)
 {
     LEDCtlOn = false;
 }
-
 
 // when any PIR triggers: Led on & start one-shot timer to switch off later
 void PIR_LED_ON()
@@ -270,21 +274,32 @@ void loop()
     {
         PIR0Occured = false;
         PIR_LED_ON();
-        publishMQTT("alarmW/movement/PIR0", "1");
+
+        msg0[0] = '0';
+        msg0[1] = digitalRead(PIR1GPIO13D7) ? '1':' ';
+        msg0[2] = digitalRead(PIR2GPIO14D5) ? '2':' ';
+
+        publishMQTT("alarmW/movement/PIR", msg0);
     }
 
     if (PIR1Occured == true)
     {
         PIR1Occured = false;
         PIR_LED_ON();
-        publishMQTT("alarmW/movement/PIR1", "1");
+        msg1[0] = digitalRead(PIR0GPIO12D6) ? '0':' ';
+        msg1[1] = '1';
+        msg1[2] = digitalRead(PIR2GPIO14D5) ? '2':' ';
+        publishMQTT("alarmW/movement/PIR", msg1);
     }
 
     if (PIR2Occured == true)
     {
         PIR2Occured = false;
         PIR_LED_ON();
-        publishMQTT("alarmW/movement/PIR2", "1");
+        msg2[0] = digitalRead(PIR0GPIO12D6) ? '0':' ';
+        msg2[1] = digitalRead(PIR1GPIO13D7) ? '1':' ';
+        msg2[2] = '2';
+        publishMQTT("alarmW/movement/PIR", msg2);
     }
 
     if (LEDPIROn == true || LEDCtlOn == true) { digitalWrite(LEDGPIO02D4, HIGH); }
