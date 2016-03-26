@@ -16,7 +16,15 @@ extern "C"
 //start time block
 #include <time.h>
 //end time block
-
+//start DS18B20 sensor
+#include <OneWire.h>
+#include <DallasTemperature.h>
+//end DS18B20 sensor
+//begin BMP085 sensor
+#define SENSORS_BMP085_ATTACHED
+#include <Sensors.h>
+#include <Wire.h>
+//end BMP085 sensor
 
 // start fixed IP block
 //put the following in platformio.ini:
@@ -34,17 +42,21 @@ extern "C"
 
 const int numFAsamples = 2; // must get this number of triggers
 const int timFAsamples = 10; // in this time (sec)
-const int aliveTimout  = 60000;//millisecs
+const int aliveTimout  = 5000;//millisecs
 const int LEDPIRTimeOn = 1000; // 300000 millisecs
 const int LEDCtlTimeOn = 3000; //7200000 millisecs
-time_t timeout[numFAsamples]; //keep count of alarm triggers
-int timeoutcounter;
+time_t timeoutFA[numFAsamples]; //keep count of alarm triggers
+int timeoutFAcounter;
+
+//start environmental
+const int environmentalTimout  = 30000;//millisecs
+//end environmental
 
 
 #define PIR0GPIO12D6 12  //PIR0 is on GPIO12, or D6 on the NodeMCU
 #define PIR1GPIO13D7 13  //PIR1 is on GPIO13, or D7 on the NodeMCU
 #define PIR2GPIO14D5 14  //PIR2 is on GPIO14, or D5 on the NodeMCU
-
+#define DS18GPIO00D3 0  //DS18B20 is on GPIO03, or D3 on the NodeMCU
 #define LEDGPIO02D4 2  //LED is on GPIO02, or D4 on the NodeMCU
 
 
@@ -60,6 +72,11 @@ IPAddress ipSubnetMask(255, 255, 255, 0);
 WiFiClient espClient;
 PubSubClient mqttclient(espClient);
 
+//start DS18B20 sensor
+OneWire oneWire(DS18GPIO00D3);
+DallasTemperature tempsensor(&oneWire);
+//end DS18B20 sensor
+
 //Interrupt and timer callbacks and flags
 volatile bool aliveTick;   //flag set by ISR, must be volatile
 volatile bool PIR0Occured; //flag set by ISR, must be volatile
@@ -72,6 +89,11 @@ char msg2[4] = "   ";
 os_timer_t aliveTimer;
 os_timer_t LEDPIRTimer;
 
+//start environmental
+volatile bool environmentalTick;   //flag set by ISR, must be volatile
+os_timer_t environmentalTickTimer;
+//end environmental
+
 os_timer_t LEDCtlTimer;
 void PIR0_ISR(){PIR0Occured = true;}
 void PIR1_ISR(){PIR1Occured = true;}
@@ -81,6 +103,10 @@ volatile bool LEDCtlOn; //LED on via MQTT status flag
 
 // when alive timer elapses: signal alive tick
 void aliveTimerCallback(void *pArg){aliveTick = true;}
+
+//start environmental
+void environmentalTimerCallback(void *pArg){environmentalTick = true;}
+//end environmental
 
 // when LED PIR timer elapses: LED off
 void LEDPIRTimerCallback(void *pArg)
@@ -197,8 +223,8 @@ void synchroniseLocalTime()
             }
         time_t now = time(nullptr);
         //Serial.println(now);
-        Serial.println(ctime(&now));
-        Serial.println("");
+        //Serial.println(ctime(&now));
+        //Serial.println("");
         publishMQTT("alarmW/timesynchronised", ctime(&now));
     }
     //end time block
@@ -213,11 +239,21 @@ void user_init(void)
     pinMode(PIR0GPIO12D6, INPUT);
     pinMode(PIR1GPIO13D7, INPUT);
     pinMode(PIR2GPIO14D5, INPUT);
+    //start DS18B20 sensor
+    pinMode(DS18GPIO00D3, INPUT);
+    //end DS18B20 sensor
 
     //Define a function to be called when the timer fires
     os_timer_disarm(&aliveTimer);
     os_timer_setfn(&aliveTimer, aliveTimerCallback, NULL);
     os_timer_arm(&aliveTimer, aliveTimout, true);
+
+    //start environmental
+    os_timer_disarm(&environmentalTickTimer);
+    os_timer_setfn(&environmentalTickTimer, environmentalTimerCallback, NULL);
+    os_timer_arm(&environmentalTickTimer, environmentalTimout, true);
+    environmentalTick = false;
+    //end environmental
 
     os_timer_disarm(&LEDPIRTimer);
     os_timer_setfn(&LEDPIRTimer, LEDPIRTimerCallback, NULL);
@@ -238,12 +274,28 @@ void user_init(void)
 
     for(int i=0; i<numFAsamples;i++)
     {
-        timeout[i] = 1000 * (i + 1);
+        timeoutFA[i] = 1000 * (i + 1);
     }
-    timeoutcounter = 0;
+    timeoutFAcounter = 0;
 
     synchroniseLocalTime();
+
+    //start DS18B20 sensor
+    tempsensor.begin();
+    //end DS18B20 sensor
+
+    //begin BMP085 sensor
+    // Activate i2c
+    //Wire.begin(int sda, int scl) //default to pins SDA(4, D2 on nodeMCU) and SCL(5, D1 on nodeMCU).
+    Wire.begin(4, 5);
+    // Initialize devices
+    Sensors::initialize();
+    //end BMP085 sensor
+
+
 }
+
+
 
 
 void mqttCallback(const char* topic, const byte* payload, unsigned int length)
@@ -310,6 +362,48 @@ void loop()
     }
     mqttclient.loop();
 
+    //start environmental
+    if (environmentalTick == true)
+    {
+        char tmp[25] ;
+        environmentalTick = false;
+
+        //start DS18B20 sensor
+        tempsensor.requestTemperatures();
+        delay (200);
+        time_t now = time(nullptr);
+
+        //Arduino don't have float formatting for sprintf
+        //so copy the time to buffer, format float and overwrite \r\n
+        strcpy(tmp, ctime(&now));
+        dtostrf(tempsensor.getTempCByIndex(0), 7, 1, &tmp[strlen(tmp)-1]);
+        publishMQTT("alarmW/temperatureDS18B20-C",tmp);
+        //end DS18B20 sensor
+
+        //begin BMP085 sensor
+        Barometer *barometer = Sensors::getBarometer();
+        if(barometer)
+        {
+            time_t now = time(nullptr);
+            strcpy(tmp, ctime(&now));
+            dtostrf(barometer->getPressure(), 7, 1, &tmp[strlen(tmp)-1]);
+            publishMQTT("alarmW/pressure-mB",tmp);
+        }
+
+
+        Thermometer *thermometer = Sensors::getThermometer();
+        if(thermometer)
+        {
+            time_t now = time(nullptr);
+            strcpy(tmp, ctime(&now));
+            dtostrf(thermometer->getTemperature(), 7, 1, &tmp[strlen(tmp)-1]);
+            publishMQTT("alarmW/temperatureBMP085-C",tmp);
+        }
+        //end BMP085 sensor
+    }
+    //end environmental
+
+
     if (aliveTick == true)
     {
         aliveTick = false;
@@ -338,8 +432,8 @@ void loop()
         if (msg0[0]+msg0[1] > 96)
         {
             publishMQTT("alarmW/movement/PIR", "01*");
-            timeout[(timeoutcounter+numFAsamples) % numFAsamples] = time(nullptr);
-            timeoutcounter++;
+            timeoutFA[(timeoutFAcounter+numFAsamples) % numFAsamples] = time(nullptr);
+            timeoutFAcounter++;
         }
     }
 
@@ -354,8 +448,8 @@ void loop()
         if (msg1[0]+msg1[1] > 96)
         {
             publishMQTT("alarmW/movement/PIR", "01*");
-            timeout[(timeoutcounter+numFAsamples) % numFAsamples] = time(nullptr);
-            timeoutcounter++;
+            timeoutFA[(timeoutFAcounter+numFAsamples) % numFAsamples] = time(nullptr);
+            timeoutFAcounter++;
         }
     }
 
@@ -369,14 +463,14 @@ void loop()
         publishMQTT("alarmW/movement/PIR", msg2);
     }
 
-    //prevent timeoutcounter from running away
-    if (timeoutcounter >= 2*numFAsamples) timeoutcounter=0;
+    //prevent timeoutFAcounter from rolling over after long time
+    if (timeoutFAcounter >= 2*numFAsamples) timeoutFAcounter=0;
 
     //count the number of too short intervals
     int sum = 0;
     for (int i=0; i<numFAsamples; i++)
     {
-        if (time(nullptr) - timeout[i] < timFAsamples) sum++;
+        if (time(nullptr) - timeoutFA[i] < timFAsamples) sum++;
     }
     //raise alarm if all cases too recent
     if (sum==numFAsamples)
@@ -385,7 +479,7 @@ void loop()
         //once alarm raised, clear history and start afresh
         for (int i=0; i<numFAsamples; i++)
         {
-            timeout[i] = 0;
+            timeoutFA[i] = 0;
         }
     }
 
