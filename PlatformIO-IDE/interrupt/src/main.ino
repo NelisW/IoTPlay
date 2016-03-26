@@ -1,6 +1,17 @@
 //See the documentation for this code here:
 //https://github.com/NelisW/myOpenHab/blob/master/docs/421-ESP-PIR-alarm.md
 
+//some blocks of code are encapsulated by begin and end comments to delineate some
+//sections that achieve a particular objective. These can be removed if not required.
+// These sections are
+// - time of day
+// - environmental measurement
+// - DS18B20 temperature sensor
+// - BMP085 pressure/temperature sensor
+// - Over the air (OTA) updates
+// - fixed IP
+
+
 extern "C"
 {
     #include "user_interface.h"
@@ -13,9 +24,9 @@ extern "C"
 #include <WiFiUdp.h>
 #include <ArduinoOTA.h>
 // end OTA block
-//start time block
+//start time of day block
 #include <time.h>
-//end time block
+//end time of day block
 //start DS18B20 sensor
 #include <OneWire.h>
 #include <DallasTemperature.h>
@@ -52,13 +63,11 @@ int timeoutFAcounter;
 const int environmentalTimout  = 30000;//millisecs
 //end environmental
 
-
 #define PIR0GPIO12D6 12  //PIR0 is on GPIO12, or D6 on the NodeMCU
 #define PIR1GPIO13D7 13  //PIR1 is on GPIO13, or D7 on the NodeMCU
 #define PIR2GPIO14D5 14  //PIR2 is on GPIO14, or D5 on the NodeMCU
 #define DS18GPIO00D3 0  //DS18B20 is on GPIO03, or D3 on the NodeMCU
 #define LEDGPIO02D4 2  //LED is on GPIO02, or D4 on the NodeMCU
-
 
 // start fixed IP block
 //If you do OTA then also set the target IP address in platform.ini
@@ -139,13 +148,10 @@ void setup_wifi()
     WiFi.config(ipLocal, ipGateway, ipSubnetMask);
     // end fixed IP block
 
-//start OTA block
-    ArduinoOTA.onStart([]() {
-      Serial.println("Start");
-    });
-    ArduinoOTA.onEnd([]() {
-      Serial.println("\nEnd");
-    });
+    //start OTA block
+    //careful here, lambda functions!
+    ArduinoOTA.onStart([](){Serial.println("Start");});
+    ArduinoOTA.onEnd([](){Serial.println("\nEnd"); });
     ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
       Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
     });
@@ -158,8 +164,9 @@ void setup_wifi()
       else if (error == OTA_END_ERROR) Serial.println("End Failed");
     });
     ArduinoOTA.begin();
-//end OTA block
+    //end OTA block
 
+    //get the wifi up
     while (WiFi.status() != WL_CONNECTED)
     {
         delay(500);
@@ -168,7 +175,7 @@ void setup_wifi()
     Serial.println("WiFi connected");
     Serial.println("IP address: ");
     Serial.println(WiFi.localIP());
-
+    //memory status
     Serial.print("Sketch size:  ");
     Serial.println(ESP.getSketchSize());
     Serial.print("Flash size:   ");
@@ -177,7 +184,7 @@ void setup_wifi()
     Serial.println(ESP.getFreeSketchSpace());
 }
 
-void reconnect()
+void mqttReconnect()
 {
     // Loop until we're reconnected
     while (!mqttclient.connected())
@@ -207,10 +214,10 @@ void reconnect()
 
 void synchroniseLocalTime()
 {
-    //start time block
+    //start time of day block
     //get the current wall clock time from time servers
     //we are not overly concerned with the real time,
-    //just do it as init values.
+    //just do it as init values and once per day
     if (WiFi.status() == WL_CONNECTED)
     {
         //my timezone is 2 hours ahead of GMT
@@ -222,12 +229,9 @@ void synchroniseLocalTime()
               delay(1000);
             }
         time_t now = time(nullptr);
-        //Serial.println(now);
-        //Serial.println(ctime(&now));
-        //Serial.println("");
         publishMQTT("alarmW/timesynchronised", ctime(&now));
     }
-    //end time block
+    //end time of day block
 }
 
 void user_init(void)
@@ -235,7 +239,7 @@ void user_init(void)
     // Initialize the LED pin as an output
     pinMode(LEDGPIO02D4, OUTPUT);
     digitalWrite(LEDGPIO02D4, LOW);
-
+    //set up PIR pins
     pinMode(PIR0GPIO12D6, INPUT);
     pinMode(PIR1GPIO13D7, INPUT);
     pinMode(PIR2GPIO14D5, INPUT);
@@ -255,12 +259,14 @@ void user_init(void)
     environmentalTick = false;
     //end environmental
 
+    //Timer to control how long the light will be on after trigger
     os_timer_disarm(&LEDPIRTimer);
     os_timer_setfn(&LEDPIRTimer, LEDPIRTimerCallback, NULL);
-
+    //timer to control how long the light will be on after mqtt activation
     os_timer_disarm(&LEDCtlTimer);
     os_timer_setfn(&LEDCtlTimer, LEDCtlTimerCallback, NULL);
 
+    //init values
     aliveTick = false;
     PIR0Occured = false;
     PIR1Occured = false;
@@ -268,16 +274,19 @@ void user_init(void)
     LEDPIROn = false;
     LEDCtlOn = false;
 
+    //attach interrupt to pins - only for PIRs
     attachInterrupt(PIR0GPIO12D6, PIR0_ISR, RISING);
     attachInterrupt(PIR1GPIO13D7, PIR1_ISR, RISING);
     attachInterrupt(PIR2GPIO14D5, PIR2_ISR, RISING);
 
+    //init the false alarm delay counters
     for(int i=0; i<numFAsamples;i++)
     {
         timeoutFA[i] = 1000 * (i + 1);
     }
     timeoutFAcounter = 0;
 
+    // get wall clock time from the servers
     synchroniseLocalTime();
 
     //start DS18B20 sensor
@@ -285,60 +294,14 @@ void user_init(void)
     //end DS18B20 sensor
 
     //begin BMP085 sensor
-    // Activate i2c
     //Wire.begin(int sda, int scl) //default to pins SDA(4, D2 on nodeMCU) and SCL(5, D1 on nodeMCU).
+    // Activate i2c qand initialise device
     Wire.begin(4, 5);
-    // Initialize devices
     Sensors::initialize();
     //end BMP085 sensor
-
-
 }
 
-
-
-
-void mqttCallback(const char* topic, const byte* payload, unsigned int length)
-{
-    Serial.print("Message arrived [");
-    Serial.print(topic);
-    Serial.print("] ");
-    for (int i = 0; i < length; i++)
-    {Serial.print((char)payload[i]);}
-    Serial.println();
-
-    // Switch on the LED if a 1 was received as first character
-    // also activate the timer to switch off after some time
-    if ((char)payload[0] == '1')
-    {
-        LEDCtlOn = true;
-        os_timer_arm(&LEDCtlTimer, LEDCtlTimeOn, false);
-    }
-    else{LEDCtlOn = false;}
-}
-
-
-
-void setup()
-{
-
-    Serial.begin(115200);
-    Serial.println("");
-    Serial.println("-------------------------------");
-    Serial.println("ESP8266 Alarm with MQTT warnings");
-
-    setup_wifi();
-
-    mqttclient.setServer(mqtt_server, 1883);
-    mqttclient.setCallback(mqttCallback);
-    if (!mqttclient.connected())
-    {
-        reconnect();
-    }
-
-    user_init();
-}
-
+// a little wrapper function to print to serial if publish failed
 void publishMQTT(const char* topic, const char* payload)
 {
     if (!mqttclient.publish(topic, payload))
@@ -349,6 +312,44 @@ void publishMQTT(const char* topic, const char* payload)
     }
 }
 
+void mqttCallback(const char* topic, const byte* payload, unsigned int length)
+{
+    Serial.print("Message arrived [");
+    Serial.print(topic);
+    Serial.print("] ");
+    for (int i = 0; i < length; i++) {Serial.print((char)payload[i]);}
+    Serial.println();
+
+    // flag to switch on the LED if a 1 was received as first character
+    // also activate the timer to switch off after some time
+    if ((char)payload[0] == '1')
+    {
+        LEDCtlOn = true;
+        os_timer_arm(&LEDCtlTimer, LEDCtlTimeOn, false);
+    }
+    else{LEDCtlOn = false;}
+}
+
+void setup()
+{
+    Serial.begin(115200);
+    Serial.println("");
+    Serial.println("-------------------------------");
+    Serial.println("ESP8266 Alarm with MQTT warnings");
+
+    setup_wifi();
+
+    //set up mqtt and register the callback to subscribe
+    mqttclient.setServer(mqtt_server, 1883);
+    mqttclient.setCallback(mqttCallback);
+    if (!mqttclient.connected())
+    {
+        mqttReconnect();
+    }
+
+    //do the mass of init settings
+    user_init();
+}
 
 void loop()
 {
@@ -356,13 +357,11 @@ void loop()
     ArduinoOTA.handle();
     // end OTA block
 
-    if (!mqttclient.connected())
-    {
-        reconnect();
-    }
+    if (!mqttclient.connected()){mqttReconnect();}
     mqttclient.loop();
 
     //start environmental
+    //read temperature and pressure if flag is set, then reset flag
     if (environmentalTick == true)
     {
         char tmp[25] ;
@@ -370,9 +369,8 @@ void loop()
 
         //start DS18B20 sensor
         tempsensor.requestTemperatures();
-        delay (200);
+        delay (200); //wait for result
         time_t now = time(nullptr);
-
         //Arduino don't have float formatting for sprintf
         //so copy the time to buffer, format float and overwrite \r\n
         strcpy(tmp, ctime(&now));
@@ -403,28 +401,28 @@ void loop()
     }
     //end environmental
 
-
+    //send message to confirm that we are still alive
     if (aliveTick == true)
     {
         aliveTick = false;
         publishMQTT("alarmW/alive", "1");
 
-        //start time block
-        //around midday sync with the NTP server
+        //start time of day block
+        //sync with the NTP server every day at noon
         time_t now = time(nullptr);
         struct tm* p_tm = localtime(&now);
         if (p_tm->tm_hour==12 && p_tm->tm_min==0 && p_tm->tm_sec<aliveTimout/1000)
         {
             synchroniseLocalTime();
         }
-        //end time block
+        //end time of day block
     }
 
+    //here follows the PIR sensing and decision making
     if (PIR0Occured == true)
     {
         PIR0Occured = false;
         PIR_LED_ON();
-
         msg0[0] = '0';
         msg0[1] = digitalRead(PIR1GPIO13D7) ? '1':' ';
         msg0[2] = digitalRead(PIR2GPIO14D5) ? '2':' ';
@@ -453,6 +451,7 @@ void loop()
         }
     }
 
+    //PIR2 must switch on the light but not raise the alarm
     if (PIR2Occured == true)
     {
         PIR2Occured = false;
@@ -466,13 +465,13 @@ void loop()
     //prevent timeoutFAcounter from rolling over after long time
     if (timeoutFAcounter >= 2*numFAsamples) timeoutFAcounter=0;
 
-    //count the number of too short intervals
+    //count the number of too short intervals within alarm period
     int sum = 0;
     for (int i=0; i<numFAsamples; i++)
     {
         if (time(nullptr) - timeoutFA[i] < timFAsamples) sum++;
     }
-    //raise alarm if all cases too recent
+    //raise alarm if sufficient number of alarm events are present
     if (sum==numFAsamples)
     {
         publishMQTT("alarmW/movement/PIR", "alarm");
@@ -486,6 +485,6 @@ void loop()
     if (LEDPIROn == true || LEDCtlOn == true) { digitalWrite(LEDGPIO02D4, HIGH); }
     else{ digitalWrite(LEDGPIO02D4, LOW); }
 
-
+    //yield to wifi and other background tasks
     yield();  // or delay(0);
 }
