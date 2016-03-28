@@ -197,9 +197,9 @@ void mqttReconnect()
             ///if (mqttclient.connect("ESP8266Client", mqtt_user, mqtt_password))
             Serial.println("connected");
             // Once connected, publish an announcement...
-            mqttclient.publish("alarmW/alive", "hello world");
+            mqttclient.publish("home/alarmW/alive", "hello world");
             // ... and resubscribe
-            mqttclient.subscribe("alarmW/control/LEDCtlOn");
+            mqttclient.subscribe("home/alarmW/control/LEDCtlOn");
         }
         else
         {
@@ -229,7 +229,7 @@ void synchroniseLocalTime()
               delay(1000);
             }
         time_t now = time(nullptr);
-        publishMQTT("alarmW/timesynchronised", ctime(&now));
+        publishMQTT("home/alarmW/timesynchronised", ctime(&now));
     }
     //end time of day block
 }
@@ -349,6 +349,9 @@ void setup()
 
     //do the mass of init settings
     user_init();
+
+    //start with a defined state to OpenHab
+    publishMQTT("home/alarmW/alarm", "0");
 }
 
 void loop()
@@ -371,31 +374,40 @@ void loop()
         tempsensor.requestTemperatures();
         delay (200); //wait for result
         time_t now = time(nullptr);
+        float temp = tempsensor.getTempCByIndex(0);
         //Arduino don't have float formatting for sprintf
         //so copy the time to buffer, format float and overwrite \r\n
         strcpy(tmp, ctime(&now));
-        dtostrf(tempsensor.getTempCByIndex(0), 7, 1, &tmp[strlen(tmp)-1]);
-        publishMQTT("alarmW/temperatureDS18B20-C",tmp);
+        dtostrf(temp, 7, 1, &tmp[strlen(tmp)-1]);
+        publishMQTT("home/alarmW/temperatureDS18B20-C",tmp);
+        //also publish a shorter version with only the numeric
+        publishMQTT("home/alarmW/temperatureDS18B20-Cs",dtostrf(temp, 0, 1, tmp));
         //end DS18B20 sensor
 
         //begin BMP085 sensor
         Barometer *barometer = Sensors::getBarometer();
         if(barometer)
         {
+            float pres = barometer->getPressure();
             time_t now = time(nullptr);
             strcpy(tmp, ctime(&now));
-            dtostrf(barometer->getPressure(), 7, 1, &tmp[strlen(tmp)-1]);
-            publishMQTT("alarmW/pressure-mB",tmp);
+            dtostrf(pres, 7, 1, &tmp[strlen(tmp)-1]);
+            publishMQTT("home/alarmW/pressure-mB",tmp);
+            //also publish a shorter version with only the numeric
+            publishMQTT("home/alarmW/pressure-mBs",dtostrf(pres, 0, 1, tmp));
         }
 
 
         Thermometer *thermometer = Sensors::getThermometer();
         if(thermometer)
         {
+            float temp = thermometer->getTemperature();
             time_t now = time(nullptr);
             strcpy(tmp, ctime(&now));
-            dtostrf(thermometer->getTemperature(), 7, 1, &tmp[strlen(tmp)-1]);
-            publishMQTT("alarmW/temperatureBMP085-C",tmp);
+            dtostrf(temp, 7, 1, &tmp[strlen(tmp)-1]);
+            publishMQTT("home/alarmW/temperatureBMP085-C",tmp);
+            //also publish a shorter version with only the numeric
+            publishMQTT("home/alarmW/temperatureBMP085-Cs",dtostrf(temp, 0, 1, tmp));
         }
         //end BMP085 sensor
     }
@@ -405,7 +417,7 @@ void loop()
     if (aliveTick == true)
     {
         aliveTick = false;
-        publishMQTT("alarmW/alive", "1");
+        publishMQTT("home/alarmW/alive", "1");
 
         //start time of day block
         //sync with the NTP server every day at noon
@@ -426,10 +438,10 @@ void loop()
         msg0[0] = '0';
         msg0[1] = digitalRead(PIR1GPIO13D7) ? '1':' ';
         msg0[2] = digitalRead(PIR2GPIO14D5) ? '2':' ';
-        publishMQTT("alarmW/movement/PIR", msg0);
+        publishMQTT("home/alarmW/movement/PIR", msg0);
         if (msg0[0]+msg0[1] > 96)
         {
-            publishMQTT("alarmW/movement/PIR", "01*");
+            publishMQTT("home/alarmW/movement/PIR", "01*");
             timeoutFA[(timeoutFAcounter+numFAsamples) % numFAsamples] = time(nullptr);
             timeoutFAcounter++;
         }
@@ -442,10 +454,10 @@ void loop()
         msg1[0] = digitalRead(PIR0GPIO12D6) ? '0':' ';
         msg1[1] = '1';
         msg1[2] = digitalRead(PIR2GPIO14D5) ? '2':' ';
-        publishMQTT("alarmW/movement/PIR", msg1);
+        publishMQTT("home/alarmW/movement/PIR", msg1);
         if (msg1[0]+msg1[1] > 96)
         {
-            publishMQTT("alarmW/movement/PIR", "01*");
+            publishMQTT("home/alarmW/movement/PIR", "01*");
             timeoutFA[(timeoutFAcounter+numFAsamples) % numFAsamples] = time(nullptr);
             timeoutFAcounter++;
         }
@@ -459,7 +471,7 @@ void loop()
         msg2[0] = digitalRead(PIR0GPIO12D6) ? '0':' ';
         msg2[1] = digitalRead(PIR1GPIO13D7) ? '1':' ';
         msg2[2] = '2';
-        publishMQTT("alarmW/movement/PIR", msg2);
+        publishMQTT("home/alarmW/movement/PIR", msg2);
     }
 
     //prevent timeoutFAcounter from rolling over after long time
@@ -474,8 +486,8 @@ void loop()
     //raise alarm if sufficient number of alarm events are present
     if (sum==numFAsamples)
     {
-        publishMQTT("alarmW/movement/PIR", "alarm");
-        //once alarm raised, clear history and start afresh
+        publishMQTT("home/alarmW/movement/PIR", "Alarm!");
+        publishMQTT("home/alarmW/alarm", "1");
         for (int i=0; i<numFAsamples; i++)
         {
             timeoutFA[i] = 0;
