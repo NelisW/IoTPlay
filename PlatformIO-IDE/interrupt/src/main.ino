@@ -51,11 +51,13 @@ extern "C"
 //#define mqtt_user "yourmqttserverusername"
 //#define mqtt_password "yourmqttserverpassword"
 
+// all times in milliseconds
+const int aliveTimout  = 5000; // heartbeat
+const int AlarmTimeOn  = 100; // raise alarm pulse width
+const int LEDPIRTimeOn = 1000; // duration light is on after movement
+const int LEDCtlTimeOn = 3000;  // duration light is on after external ON
+const int timFAsamples = 10000;  // time window for movement detection
 const int numFAsamples = 2; // must get this number of triggers
-const int timFAsamples = 10; // in this time (sec)
-const int aliveTimout  = 5000;//millisecs
-const int LEDPIRTimeOn = 1000; // 300000 millisecs
-const int LEDCtlTimeOn = 3000; //7200000 millisecs
 time_t timeoutFA[numFAsamples]; //keep count of alarm triggers
 int timeoutFAcounter;
 
@@ -91,19 +93,22 @@ volatile bool aliveTick;   //flag set by ISR, must be volatile
 volatile bool PIR0Occured; //flag set by ISR, must be volatile
 volatile bool PIR1Occured; //flag set by ISR, must be volatile
 volatile bool PIR2Occured; //flag set by ISR, must be volatile
+volatile bool LEDCtlOnChanged ; // to signal change in the light switch status
+volatile bool resetAlarm; // to signal that alarm pulse must be reset
 char msg0[4] = "   ";
 char msg1[4] = "   ";
 char msg2[4] = "   ";
 
-os_timer_t aliveTimer;
-os_timer_t LEDPIRTimer;
+os_timer_t aliveTimer; // send alive signals every so often
+os_timer_t AlarmTimer; // how long must the raise alarm signal be before reset
+os_timer_t LEDPIRTimer; // how long the light must be on after movement
+os_timer_t LEDCtlTimer; // how long must the light be on if switched on from outside
 
 //start environmental
+os_timer_t environmentalTickTimer; //measure temp/pres regularly
 volatile bool environmentalTick;   //flag set by ISR, must be volatile
-os_timer_t environmentalTickTimer;
 //end environmental
 
-os_timer_t LEDCtlTimer;
 void PIR0_ISR(){PIR0Occured = true;}
 void PIR1_ISR(){PIR1Occured = true;}
 void PIR2_ISR(){PIR2Occured = true;}
@@ -117,17 +122,11 @@ void aliveTimerCallback(void *pArg){aliveTick = true;}
 void environmentalTimerCallback(void *pArg){environmentalTick = true;}
 //end environmental
 
-// when LED PIR timer elapses: LED off
-void LEDPIRTimerCallback(void *pArg)
-{
-    LEDPIROn = false;
-}
+// the various time period callbacks
+void LEDPIRTimerCallback(void *pArg){LEDPIROn = false;}
+void AlarmTimerCallback(void *pArg){resetAlarm = true; }
+void LEDCtlTimerCallback(void *pArg){ LEDCtlOn = false;LEDCtlOnChanged=true;}
 
-// when LED Ctl timer elapses: LED off
-void LEDCtlTimerCallback(void *pArg)
-{
-    LEDCtlOn = false;
-}
 
 // when any PIR triggers: Led on & start one-shot timer to switch off later
 void PIR_LED_ON()
@@ -184,6 +183,18 @@ void setup_wifi()
     Serial.println(ESP.getFreeSketchSpace());
 }
 
+// a little wrapper function to print to serial if publish failed
+void publishMQTT(const char* topic, const char* payload)
+{
+    if (!mqttclient.publish(topic, payload))
+    {
+        Serial.print("Publish failed: ");
+        Serial.print(topic);
+        Serial.println(payload);
+    }
+}
+
+
 void mqttReconnect()
 {
     // Loop until we're reconnected
@@ -197,9 +208,9 @@ void mqttReconnect()
             ///if (mqttclient.connect("ESP8266Client", mqtt_user, mqtt_password))
             Serial.println("connected");
             // Once connected, publish an announcement...
-            mqttclient.publish("home/alarmW/alive", "hello world");
+            publishMQTT("home/alarmW/alive", "hello world");
             // ... and resubscribe
-            mqttclient.subscribe("home/alarmW/control/LEDCtlOn");
+            mqttclient.subscribe("home/alarmW/control/LEDCtlSwitchOn");
         }
         else
         {
@@ -265,6 +276,9 @@ void user_init(void)
     //timer to control how long the light will be on after mqtt activation
     os_timer_disarm(&LEDCtlTimer);
     os_timer_setfn(&LEDCtlTimer, LEDCtlTimerCallback, NULL);
+    //timer to control how long the alarm pulse must be high after alarm is raised
+    os_timer_disarm(&AlarmTimer);
+    os_timer_setfn(&AlarmTimer, AlarmTimerCallback, NULL);
 
     //init values
     aliveTick = false;
@@ -273,7 +287,8 @@ void user_init(void)
     PIR2Occured = false;
     LEDPIROn = false;
     LEDCtlOn = false;
-
+    LEDCtlOnChanged = false;
+    resetAlarm = false;
     //attach interrupt to pins - only for PIRs
     attachInterrupt(PIR0GPIO12D6, PIR0_ISR, RISING);
     attachInterrupt(PIR1GPIO13D7, PIR1_ISR, RISING);
@@ -301,33 +316,37 @@ void user_init(void)
     //end BMP085 sensor
 }
 
-// a little wrapper function to print to serial if publish failed
-void publishMQTT(const char* topic, const char* payload)
-{
-    if (!mqttclient.publish(topic, payload))
-    {
-        Serial.print("Publish failed: ");
-        Serial.print(topic);
-        Serial.println(payload);
-    }
-}
 
 void mqttCallback(const char* topic, const byte* payload, unsigned int length)
 {
-    Serial.print("Message arrived [");
-    Serial.print(topic);
-    Serial.print("] ");
-    for (int i = 0; i < length; i++) {Serial.print((char)payload[i]);}
-    Serial.println();
+    //for some strange reason the payload sequence returned has extra chars appended at the end.
+    //It seems that a long buffer was created and all of it sent, irrespective of the payload size.
+    //In fact it appears that the extra chars is the date-time of the message.
+    //the payload length is given so we can truncate with \0, but this does not work either, because
+    //main.ino:331:17: error: assignment of read-only location '*(payload + ((sizetype)length))
+    //so then use strncmp with the length specified. Why did it take me so long?
+    // Serial.print("Message arrived [");
+    // Serial.print(topic);
+    // Serial.println("] ");
+    // Serial.println((const char*)payload);
+    // for (int i = 0; i < length; i++) {Serial.print((char)payload[i]);}
+    // Serial.println();
 
-    // flag to switch on the LED if a 1 was received as first character
-    // also activate the timer to switch off after some time
-    if ((char)payload[0] == '1')
+    if (strcmp(topic, "home/alarmW/control/LEDCtlSwitchOn") == 0)
     {
-        LEDCtlOn = true;
-        os_timer_arm(&LEDCtlTimer, LEDCtlTimeOn, false);
+        if (strncmp((char *) payload, "ON",length) == 0)// must be ON or OFF
+        {
+            LEDCtlOn = true;
+            LEDCtlOnChanged = true;
+            //activate time to switch off after some time
+            os_timer_arm(&LEDCtlTimer, LEDCtlTimeOn, false);
+        }
+        else{LEDCtlOn = false;}
     }
-    else{LEDCtlOn = false;}
+    else if (false)
+    {
+        ;//later at more tests here
+    }
 }
 
 void setup()
@@ -352,6 +371,8 @@ void setup()
 
     //start with a defined state to OpenHab
     publishMQTT("home/alarmW/alarm", "0");
+    publishMQTT("home/alarmW/control/LEDCtlOn", "0");
+
 }
 
 void loop()
@@ -481,21 +502,47 @@ void loop()
     int sum = 0;
     for (int i=0; i<numFAsamples; i++)
     {
-        if (time(nullptr) - timeoutFA[i] < timFAsamples) sum++;
+        if (time(nullptr) - timeoutFA[i] < timFAsamples/1000) sum++;
     }
     //raise alarm if sufficient number of alarm events are present
     if (sum==numFAsamples)
     {
         publishMQTT("home/alarmW/movement/PIR", "Alarm!");
         publishMQTT("home/alarmW/alarm", "1");
+        os_timer_arm(&AlarmTimer, AlarmTimeOn, false);//reset after raising
         for (int i=0; i<numFAsamples; i++)
         {
             timeoutFA[i] = 0;
         }
     }
 
-    if (LEDPIROn == true || LEDCtlOn == true) { digitalWrite(LEDGPIO02D4, HIGH); }
-    else{ digitalWrite(LEDGPIO02D4, LOW); }
+    if (LEDPIROn == true || LEDCtlOn == true)
+    {
+        digitalWrite(LEDGPIO02D4, HIGH);
+        if (LEDCtlOnChanged && LEDCtlOn)
+        {
+            publishMQTT("home/alarmW/control/LEDCtlOn", "1");
+            LEDCtlOnChanged = false;
+        }
+     }
+    else
+    {
+        digitalWrite(LEDGPIO02D4, LOW);
+        if (LEDCtlOnChanged)
+        {
+            publishMQTT("home/alarmW/control/LEDCtlOn", "0");
+            LEDCtlOnChanged = false;
+        }
+
+     }
+
+     if (resetAlarm)
+     {
+         publishMQTT("home/alarmW/alarm", "0");
+         resetAlarm = false;
+     }
+
+
 
     //yield to wifi and other background tasks
     yield();  // or delay(0);
