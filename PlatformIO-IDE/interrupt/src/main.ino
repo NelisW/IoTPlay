@@ -59,6 +59,8 @@ extern "C"
 //#define mqtt_user "yourmqttserverusername"
 //#define mqtt_password "yourmqttserverpassword"
 
+
+
 // all times in milliseconds
 const int aliveTimout  = 5000; // heartbeat
 const int AlarmTimeOn  = 100; // raise alarm pulse width
@@ -89,6 +91,10 @@ IPAddress ipGateway(10, 0, 0, 2);
 IPAddress ipSubnetMask(255, 255, 255, 0);
 // end fixed IP block
 
+//start web server
+WiFiServer wifiserver(80);
+//end web server
+
 WiFiClient espClient;
 PubSubClient mqttclient(espClient);
 
@@ -103,6 +109,10 @@ DHT dht(DHT1GPIO00D3, DHTTYPE);
 //end DHT11 sensor
 
 
+float humidity;
+float pressure;
+float temperatureBMP;
+float temperatureDHT;
 
 
 //Interrupt and timer callbacks and flags
@@ -188,9 +198,21 @@ void setup_wifi()
         delay(500);
         Serial.print(".");
     }
-    Serial.println("WiFi connected");
-    Serial.println("IP address: ");
+
+    //start up the web server
+
+    Serial.print("WiFi connected: ");
+    Serial.print("IP address: ");
     Serial.println(WiFi.localIP());
+
+    //start web server
+    wifiserver.begin();
+    Serial.print("Server started. use this URL to connect: ");
+    Serial.print("http://");
+    Serial.print(WiFi.localIP());
+    Serial.println("/");
+    //end web server
+
     //memory status
     Serial.print("Sketch size:  ");
     Serial.println(ESP.getSketchSize());
@@ -337,6 +359,16 @@ void user_init(void)
     Wire.begin(4, 5);
     Sensors::initialize();
     //end BMP085 sensor
+
+
+    humidity = NAN;
+    pressure = NAN;
+    temperatureBMP = NAN;
+    temperatureDHT = NAN;
+
+
+
+
 }
 
 
@@ -407,6 +439,7 @@ void loop()
     if (!mqttclient.connected()){mqttReconnect();}
     mqttclient.loop();
 
+
     //start environmental
     //read temperature and pressure if flag is set, then reset flag
     if (environmentalTick == true)
@@ -429,26 +462,26 @@ void loop()
         //end DS18B20 sensor
 
         //begin DHT11 sensor
-        float h = dht.readHumidity();
-        if (! isnan(h))
+        humidity = dht.readHumidity();
+        if (! isnan(humidity))
         {
             time_t now = time(nullptr);
             strcpy(tmp, ctime(&now));
-            dtostrf(h, 7, 1, &tmp[strlen(tmp)-1]);
+            dtostrf(humidity, 7, 1, &tmp[strlen(tmp)-1]);
             publishMQTT("home/alarmW/humidityDHT11",tmp);
             //also publish a shorter version with only the numeric
-            publishMQTT("home/alarmW/humidityDHT11s",dtostrf(h, 0, 0, tmp));
+            publishMQTT("home/alarmW/humidityDHT11s",dtostrf(humidity, 0, 0, tmp));
         }
 
-        float f = dht.readTemperature(false); //false means C, true means F
-        if (! isnan(f))
+        temperatureDHT = dht.readTemperature(false); //false means C, true means F
+        if (! isnan(temperatureDHT))
         {
             time_t now = time(nullptr);
             strcpy(tmp, ctime(&now));
-            dtostrf(f, 7, 1, &tmp[strlen(tmp)-1]);
+            dtostrf(temperatureDHT, 7, 1, &tmp[strlen(tmp)-1]);
             publishMQTT("home/alarmW/temperatureDHT11-C",tmp);
             //also publish a shorter version with only the numeric
-            publishMQTT("home/alarmW/temperatureDHT11-Cs",dtostrf(f, 0, 1, tmp));
+            publishMQTT("home/alarmW/temperatureDHT11-Cs",dtostrf(temperatureDHT, 0, 1, tmp));
         }
         //end DHT11 sensor
 
@@ -456,26 +489,34 @@ void loop()
         Barometer *barometer = Sensors::getBarometer();
         if(barometer)
         {
-            float pres = barometer->getPressure();
+            pressure = barometer->getPressure();
             time_t now = time(nullptr);
             strcpy(tmp, ctime(&now));
-            dtostrf(pres, 7, 1, &tmp[strlen(tmp)-1]);
+            dtostrf(pressure, 7, 1, &tmp[strlen(tmp)-1]);
             publishMQTT("home/alarmW/pressure-mB",tmp);
             //also publish a shorter version with only the numeric
-            publishMQTT("home/alarmW/pressure-mBs",dtostrf(pres, 0, 1, tmp));
+            publishMQTT("home/alarmW/pressure-mBs",dtostrf(pressure, 0, 1, tmp));
+        }
+        else
+        {
+            pressure = NAN;
         }
 
 
         Thermometer *thermometer = Sensors::getThermometer();
         if(thermometer)
         {
-            float temp = thermometer->getTemperature();
+            temperatureBMP = thermometer->getTemperature();
             time_t now = time(nullptr);
             strcpy(tmp, ctime(&now));
-            dtostrf(temp, 7, 1, &tmp[strlen(tmp)-1]);
+            dtostrf(temperatureBMP, 7, 1, &tmp[strlen(tmp)-1]);
             publishMQTT("home/alarmW/temperatureBMP085-C",tmp);
             //also publish a shorter version with only the numeric
-            publishMQTT("home/alarmW/temperatureBMP085-Cs",dtostrf(temp, 0, 1, tmp));
+            publishMQTT("home/alarmW/temperatureBMP085-Cs",dtostrf(temperatureBMP, 0, 1, tmp));
+        }
+        else
+        {
+            temperatureBMP = NAN;
         }
         //end BMP085 sensor
     }
@@ -588,6 +629,55 @@ void loop()
          publishMQTT("home/alarmW/alarm", "0");
          resetAlarm = false;
      }
+
+     //start web server
+     // Check if a client has connected to our server
+     WiFiClient client = wifiserver.available();
+     if (client)
+     {
+         char tmp[120] ;
+        // Return the response
+        client.println("HTTP/1.1 200 OK");
+        client.println("Content-Type: text/html");
+        client.println(""); //  do not forget this one
+        client.println("<!DOCTYPE HTML>");
+        client.println("<html>");
+
+        time_t now = time(nullptr);
+        strcpy(tmp, ctime(&now));
+        client.println(tmp);
+        client.println("<br><br>");
+
+        if (!isnan(humidity))
+        {
+            client.print("Humidity: ");
+            client.print(dtostrf(humidity, 0, 0, tmp));
+            client.println(" %<br/>\n");
+        }
+        if (!isnan(pressure))
+        {
+            client.print("Pressure: ");
+            client.print(dtostrf(pressure, 0, 1, tmp));
+            client.println(" mB<br/>\n");
+        }
+        if (!isnan(temperatureBMP))
+        {
+            client.print("Temperature (BMP): ");
+            client.print(dtostrf(temperatureBMP, 0, 1, tmp));
+            client.println(" C<br/>\n");
+        }
+        if (!isnan(temperatureDHT))
+        {
+            client.print("Temperature (DHT): ");
+            client.print(dtostrf(temperatureDHT, 0, 1, tmp));
+            client.println(" C<br/>\n");
+        }
+        // client.println("<br><br>");
+        // client.println("<a href=\"/LED=ON\"\"><button>Turn On </button></a>");
+        // client.println("<a href=\"/LED=OFF\"\"><button>Turn Off </button></a><br />");
+        client.println("</html>");
+     }
+     //end web server
 
 
 
