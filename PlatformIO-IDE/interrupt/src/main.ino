@@ -28,14 +28,22 @@ extern "C"
 #include <time.h>
 //end time of day block
 //start DS18B20 sensor
-#include <OneWire.h>
-#include <DallasTemperature.h>
+//#include <OneWire.h>
+//#include <DallasTemperature.h>
 //end DS18B20 sensor
 //begin BMP085 sensor
 #define SENSORS_BMP085_ATTACHED
 #include <Sensors.h>
 #include <Wire.h>
 //end BMP085 sensor
+//begin DHT11 sensor
+// Uncomment whatever type you're using!
+#define DHTTYPE DHT11   // DHT 11
+//#define DHTTYPE DHT22   // DHT 22  (AM2302), AM2321
+//#define DHTTYPE DHT21   // DHT 21 (AM2301)
+#include <DHT.h>
+//end DHT11 sensor
+
 
 // start fixed IP block
 //put the following in platformio.ini:
@@ -50,6 +58,8 @@ extern "C"
 //#define mqtt_server "yourmqttserverIP"
 //#define mqtt_user "yourmqttserverusername"
 //#define mqtt_password "yourmqttserverpassword"
+
+
 
 // all times in milliseconds
 const int aliveTimout  = 5000; // heartbeat
@@ -68,8 +78,9 @@ const int environmentalTimout  = 30000;//millisecs
 #define PIR0GPIO12D6 12  //PIR0 is on GPIO12, or D6 on the NodeMCU
 #define PIR1GPIO13D7 13  //PIR1 is on GPIO13, or D7 on the NodeMCU
 #define PIR2GPIO14D5 14  //PIR2 is on GPIO14, or D5 on the NodeMCU
-#define DS18GPIO00D3 0  //DS18B20 is on GPIO03, or D3 on the NodeMCU
 #define LEDGPIO02D4 2  //LED is on GPIO02, or D4 on the NodeMCU
+//#define DS18GPIO00D3 0  //DS18B20 is on GPIO00, or D3 on the NodeMCU
+#define DHT1GPIO00D3 0  //DHT11 is on GPIO00, or D3 on the NodeMCU
 
 // start fixed IP block
 //If you do OTA then also set the target IP address in platform.ini
@@ -80,13 +91,29 @@ IPAddress ipGateway(10, 0, 0, 2);
 IPAddress ipSubnetMask(255, 255, 255, 0);
 // end fixed IP block
 
+//start web server
+WiFiServer wifiserver(80);
+//end web server
+
 WiFiClient espClient;
 PubSubClient mqttclient(espClient);
 
 //start DS18B20 sensor
-OneWire oneWire(DS18GPIO00D3);
-DallasTemperature tempsensor(&oneWire);
+//OneWire oneWire(DS18GPIO00D3);
+//DallasTemperature tempsensor(&oneWire);
 //end DS18B20 sensor
+
+//begin DHT11 sensor
+//http://www.esp8266.com/viewtopic.php?f=29&t=3249
+DHT dht(DHT1GPIO00D3, DHTTYPE);
+//end DHT11 sensor
+
+
+float humidity;
+float pressure;
+float temperatureBMP;
+float temperatureDHT;
+
 
 //Interrupt and timer callbacks and flags
 volatile bool aliveTick;   //flag set by ISR, must be volatile
@@ -171,9 +198,21 @@ void setup_wifi()
         delay(500);
         Serial.print(".");
     }
-    Serial.println("WiFi connected");
-    Serial.println("IP address: ");
+
+    //start up the web server
+
+    Serial.print("WiFi connected: ");
+    Serial.print("IP address: ");
     Serial.println(WiFi.localIP());
+
+    //start web server
+    wifiserver.begin();
+    Serial.print("Server started. use this URL to connect: ");
+    Serial.print("http://");
+    Serial.print(WiFi.localIP());
+    Serial.println("/");
+    //end web server
+
     //memory status
     Serial.print("Sketch size:  ");
     Serial.println(ESP.getSketchSize());
@@ -255,9 +294,11 @@ void user_init(void)
     pinMode(PIR1GPIO13D7, INPUT);
     pinMode(PIR2GPIO14D5, INPUT);
     //start DS18B20 sensor
-    pinMode(DS18GPIO00D3, INPUT);
+    //pinMode(DS18GPIO00D3, INPUT);
     //end DS18B20 sensor
-
+    //begin DHT11 sensor
+    pinMode(DHT1GPIO00D3, INPUT);
+    //end DHT11 sensor
     //Define a function to be called when the timer fires
     os_timer_disarm(&aliveTimer);
     os_timer_setfn(&aliveTimer, aliveTimerCallback, NULL);
@@ -305,8 +346,12 @@ void user_init(void)
     synchroniseLocalTime();
 
     //start DS18B20 sensor
-    tempsensor.begin();
+    //tempsensor.begin();
     //end DS18B20 sensor
+
+    //begin DHT11 sensor
+    dht.begin();
+    //end DHT11 sensor
 
     //begin BMP085 sensor
     //Wire.begin(int sda, int scl) //default to pins SDA(4, D2 on nodeMCU) and SCL(5, D1 on nodeMCU).
@@ -314,6 +359,16 @@ void user_init(void)
     Wire.begin(4, 5);
     Sensors::initialize();
     //end BMP085 sensor
+
+
+    humidity = NAN;
+    pressure = NAN;
+    temperatureBMP = NAN;
+    temperatureDHT = NAN;
+
+
+
+
 }
 
 
@@ -384,51 +439,84 @@ void loop()
     if (!mqttclient.connected()){mqttReconnect();}
     mqttclient.loop();
 
+
     //start environmental
     //read temperature and pressure if flag is set, then reset flag
     if (environmentalTick == true)
     {
-        char tmp[25] ;
+        char tmp[40] ;
         environmentalTick = false;
 
         //start DS18B20 sensor
-        tempsensor.requestTemperatures();
-        delay (200); //wait for result
-        time_t now = time(nullptr);
-        float temp = tempsensor.getTempCByIndex(0);
-        //Arduino don't have float formatting for sprintf
-        //so copy the time to buffer, format float and overwrite \r\n
-        strcpy(tmp, ctime(&now));
-        dtostrf(temp, 7, 1, &tmp[strlen(tmp)-1]);
-        publishMQTT("home/alarmW/temperatureDS18B20-C",tmp);
-        //also publish a shorter version with only the numeric
-        publishMQTT("home/alarmW/temperatureDS18B20-Cs",dtostrf(temp, 0, 1, tmp));
+        // tempsensor.requestTemperatures();
+        // delay (200); //wait for result
+        // time_t now = time(nullptr);
+        // float temp = tempsensor.getTempCByIndex(0);
+        // //Arduino don't have float formatting for sprintf
+        // //so copy the time to buffer, format float and overwrite \r\n
+        // strcpy(tmp, ctime(&now));
+        // dtostrf(temp, 7, 1, &tmp[strlen(tmp)-1]);
+        // publishMQTT("home/alarmW/temperatureDS18B20-C",tmp);
+        // //also publish a shorter version with only the numeric
+        // publishMQTT("home/alarmW/temperatureDS18B20-Cs",dtostrf(temp, 0, 1, tmp));
         //end DS18B20 sensor
+
+        //begin DHT11 sensor
+        humidity = dht.readHumidity();
+        if (! isnan(humidity))
+        {
+            time_t now = time(nullptr);
+            strcpy(tmp, ctime(&now));
+            dtostrf(humidity, 7, 1, &tmp[strlen(tmp)-1]);
+            publishMQTT("home/alarmW/humidityDHT11",tmp);
+            //also publish a shorter version with only the numeric
+            publishMQTT("home/alarmW/humidityDHT11s",dtostrf(humidity, 0, 0, tmp));
+        }
+
+        temperatureDHT = dht.readTemperature(false); //false means C, true means F
+        if (! isnan(temperatureDHT))
+        {
+            time_t now = time(nullptr);
+            strcpy(tmp, ctime(&now));
+            dtostrf(temperatureDHT, 7, 1, &tmp[strlen(tmp)-1]);
+            publishMQTT("home/alarmW/temperatureDHT11-C",tmp);
+            //also publish a shorter version with only the numeric
+            publishMQTT("home/alarmW/temperatureDHT11-Cs",dtostrf(temperatureDHT, 0, 1, tmp));
+        }
+        //end DHT11 sensor
 
         //begin BMP085 sensor
         Barometer *barometer = Sensors::getBarometer();
         if(barometer)
         {
-            float pres = barometer->getPressure();
+            pressure = barometer->getPressure();
             time_t now = time(nullptr);
             strcpy(tmp, ctime(&now));
-            dtostrf(pres, 7, 1, &tmp[strlen(tmp)-1]);
+            dtostrf(pressure, 7, 1, &tmp[strlen(tmp)-1]);
             publishMQTT("home/alarmW/pressure-mB",tmp);
             //also publish a shorter version with only the numeric
-            publishMQTT("home/alarmW/pressure-mBs",dtostrf(pres, 0, 1, tmp));
+            publishMQTT("home/alarmW/pressure-mBs",dtostrf(pressure, 0, 1, tmp));
+        }
+        else
+        {
+            pressure = NAN;
         }
 
 
         Thermometer *thermometer = Sensors::getThermometer();
         if(thermometer)
         {
-            float temp = thermometer->getTemperature();
+            temperatureBMP = thermometer->getTemperature();
             time_t now = time(nullptr);
             strcpy(tmp, ctime(&now));
-            dtostrf(temp, 7, 1, &tmp[strlen(tmp)-1]);
+            dtostrf(temperatureBMP, 7, 1, &tmp[strlen(tmp)-1]);
             publishMQTT("home/alarmW/temperatureBMP085-C",tmp);
             //also publish a shorter version with only the numeric
-            publishMQTT("home/alarmW/temperatureBMP085-Cs",dtostrf(temp, 0, 1, tmp));
+            publishMQTT("home/alarmW/temperatureBMP085-Cs",dtostrf(temperatureBMP, 0, 1, tmp));
+        }
+        else
+        {
+            temperatureBMP = NAN;
         }
         //end BMP085 sensor
     }
@@ -541,6 +629,55 @@ void loop()
          publishMQTT("home/alarmW/alarm", "0");
          resetAlarm = false;
      }
+
+     //start web server
+     // Check if a client has connected to our server
+     WiFiClient client = wifiserver.available();
+     if (client)
+     {
+         char tmp[120] ;
+        // Return the response
+        client.println("HTTP/1.1 200 OK");
+        client.println("Content-Type: text/html");
+        client.println(""); //  do not forget this one
+        client.println("<!DOCTYPE HTML>");
+        client.println("<html>");
+
+        time_t now = time(nullptr);
+        strcpy(tmp, ctime(&now));
+        client.println(tmp);
+        client.println("<br><br>");
+
+        if (!isnan(humidity))
+        {
+            client.print("Humidity: ");
+            client.print(dtostrf(humidity, 0, 0, tmp));
+            client.println(" %<br/>\n");
+        }
+        if (!isnan(pressure))
+        {
+            client.print("Pressure: ");
+            client.print(dtostrf(pressure, 0, 1, tmp));
+            client.println(" mB<br/>\n");
+        }
+        if (!isnan(temperatureBMP))
+        {
+            client.print("Temperature (BMP): ");
+            client.print(dtostrf(temperatureBMP, 0, 1, tmp));
+            client.println(" C<br/>\n");
+        }
+        if (!isnan(temperatureDHT))
+        {
+            client.print("Temperature (DHT): ");
+            client.print(dtostrf(temperatureDHT, 0, 1, tmp));
+            client.println(" C<br/>\n");
+        }
+        // client.println("<br><br>");
+        // client.println("<a href=\"/LED=ON\"\"><button>Turn On </button></a>");
+        // client.println("<a href=\"/LED=OFF\"\"><button>Turn Off </button></a><br />");
+        client.println("</html>");
+     }
+     //end web server
 
 
 
