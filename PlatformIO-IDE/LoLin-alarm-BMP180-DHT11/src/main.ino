@@ -81,6 +81,8 @@ const int environmentalTimout  = 30000;//millisecs
 #define LEDGPIO02D4 2  //LED is on GPIO02, or D4 on the NodeMCU
 //#define DS18GPIO00D3 0  //DS18B20 is on GPIO00, or D3 on the NodeMCU
 #define DHT1GPIO00D3 0  //DHT11 is on GPIO00, or D3 on the NodeMCU
+#define BMP180SDAGPIO04D2 4  //pins SDA(4, D2 on nodeMCU)
+#define BMP180SCLGPIO05D1 5  //pins SCL(5, D1 on nodeMCU).
 
 // start fixed IP block
 //If you do OTA then also set the target IP address in platform.ini
@@ -356,7 +358,7 @@ void user_init(void)
     //begin BMP085 sensor
     //Wire.begin(int sda, int scl) //default to pins SDA(4, D2 on nodeMCU) and SCL(5, D1 on nodeMCU).
     // Activate i2c qand initialise device
-    Wire.begin(4, 5);
+    Wire.begin(BMP180SDAGPIO04D2, BMP180SCLGPIO05D1);
     Sensors::initialize();
     //end BMP085 sensor
 
