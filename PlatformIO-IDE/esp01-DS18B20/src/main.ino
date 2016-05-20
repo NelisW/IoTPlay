@@ -17,8 +17,7 @@ extern "C"
 // end OTA block
 
 // start fixed IP block
-//put the following in platformio.ini. this will tell platformio to use the wifi to upload:
-//upload_port = 10.0.0.32
+// put the following in platformio.ini: 'upload_port = 10.0.0.32'.
 IPAddress ipLocal(10, 0, 0, 32);
 IPAddress ipGateway(10, 0, 0, 2);
 IPAddress ipSubnetMask(255, 255, 255, 0);
@@ -33,7 +32,6 @@ IPAddress ipSubnetMask(255, 255, 255, 0);
 //#define mqtt_server "yourmqttserverIP"
 //#define mqtt_user "yourmqttserverusername"
 //#define mqtt_password "yourmqttserverpassword"
-
 
 //start web server
 WiFiServer wifiserver(80);
@@ -55,9 +53,7 @@ DallasTemperature tempsensor(&oneWire);
 const int aliveTimout  = 5000; // in milliseconds
 volatile bool aliveTick;   //flag set by ISR, must be volatile
 os_timer_t aliveTimer; // send alive signals every so often
-
-// when alive timer elapses: signal alive tick
-void aliveTimerCallback(void *pArg){aliveTick = true;}
+void aliveTimerCallback(void *pArg){aliveTick = true;} // when alive timer elapses
 
 void setup_wifi()
 {
@@ -67,12 +63,13 @@ void setup_wifi()
     Serial.println(wifi_ssid);
     WiFi.mode(WIFI_STA);
     WiFi.begin(wifi_ssid, wifi_password);
+
     // start fixed IP block
     WiFi.config(ipLocal, ipGateway, ipSubnetMask);
     // end fixed IP block
 
     //start OTA block
-    //careful here, lambda functions!
+    //careful here, lambda functions! Don't 'fix' the code!!!!
     ArduinoOTA.onStart([](){Serial.println("Start");});
     ArduinoOTA.onEnd([](){Serial.println("\nEnd"); });
     ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
@@ -95,9 +92,6 @@ void setup_wifi()
         delay(500);
         Serial.print(".");
     }
-
-    //start up the web server
-
     Serial.print("WiFi connected: ");
     Serial.print("IP address: ");
     Serial.println(WiFi.localIP());
@@ -133,36 +127,29 @@ void publishMQTT(const char* topic, const char* payload)
 
 void mqttReconnect()
 {
-    // Loop until we're reconnected
     while (!mqttclient.connected())
     {
         Serial.print("Attempting MQTT connection...");
-        // Attempt to connect
         // If you do not want to use a username and password, change next line to
+        // if (mqttclient.connect("ESP8266Client", mqtt_user, mqtt_password))
         if (mqttclient.connect("ESP8266Client"))
         {
-            ///if (mqttclient.connect("ESP8266Client", mqtt_user, mqtt_password))
             Serial.println("connected");
-            // Once connected, publish an announcement...
-            publishMQTT("home/alarmW/alive", "hello world");
-            // ... and resubscribe
-            mqttclient.subscribe("home/alarmW/control/LEDCtlSwitchOn");
+            publishMQTT("home/DS18B20S0/alive", "DS18B20S0 online");
         }
         else
         {
             Serial.print("failed, rc=");
             Serial.print(mqttclient.state());
             Serial.println(" try again in 5 seconds");
-            // Wait 5 seconds before retrying
             delay(5000);
         }
     }
 }
 
+//start time of day block
 void synchroniseLocalTime()
 {
-    //start time of day block
-    //get the current wall clock time from time servers
     //we are not overly concerned with the real time,
     //just do it as init values and once per day
     if (WiFi.status() == WL_CONNECTED)
@@ -176,10 +163,10 @@ void synchroniseLocalTime()
               delay(1000);
             }
         time_t now = time(nullptr);
-        publishMQTT("home/alarmW/timesynchronised", ctime(&now));
+        publishMQTT("home/DS18B20S0/timesynchronised", ctime(&now));
     }
-    //end time of day block
 }
+//end time of day block
 
 
 void setup()
@@ -187,7 +174,7 @@ void setup()
     Serial.begin(115200);
     Serial.println("");
     Serial.println("-------------------------------");
-    Serial.println("ESP8266 Alarm with MQTT warnings");
+    Serial.println("ESP8266 DS18B20 sensors with MQTT notification");
 
     setup_wifi();
 
@@ -208,9 +195,6 @@ void setup()
 
     // get wall clock time from the servers
     synchroniseLocalTime();
-
-    //start with a defined state to OpenHab
-    publishMQTT("home/solarT/alarm", "0");
 }
 
 void loop()
@@ -222,25 +206,26 @@ void loop()
     if (!mqttclient.connected()){mqttReconnect();}
     mqttclient.loop();
 
+    float temperature;
+    char strbuffer[120] ;
+
     //send message to confirm that we are still alive
     if (aliveTick == true)
     {
         aliveTick = false;
-        publishMQTT("home/alarmW/alive", "1");
 
         //start DS18B20 sensor
         tempsensor.requestTemperatures();
         delay (200); //wait for result
         time_t now = time(nullptr);
-        float temp = tempsensor.getTempCByIndex(0);
+        temperature = tempsensor.getTempCByIndex(0);
         //Arduino don't have float formatting for sprintf
         //so copy the time to buffer, format float and overwrite \r\n
-        char tmp[40] ;
-        strcpy(tmp, ctime(&now));
-        dtostrf(temp, 7, 1, &tmp[strlen(tmp)-1]);
-        publishMQTT("home/alarmW/temperatureDS18B20-C",tmp);
+        strcpy(strbuffer, ctime(&now));
+        dtostrf(temperature, 7, 1, &strbuffer[strlen(strbuffer)-1]);
+        publishMQTT("home/DS18B20S0/temperatureDS18B20-TC",strbuffer);
         //also publish a shorter version with only the numeric
-        publishMQTT("home/alarmW/temperatureDS18B20-Cs",dtostrf(temp, 0, 1, tmp));
+        publishMQTT("home/DS18B20S0/temperatureDS18B20-C",dtostrf(temperature, 0, 1, strbuffer));
         //end DS18B20 sensor
 
         //start time of day block
@@ -254,12 +239,10 @@ void loop()
         //end time of day block
     }
 
-     //start web server
-     // Check if a client has connected to our server
+     // Check if a client has connected to our web server
      WiFiClient client = wifiserver.available();
      if (client)
      {
-         char tmp[120] ;
         // Return the response
         client.println("HTTP/1.1 200 OK");
         client.println("Content-Type: text/html");
@@ -268,20 +251,16 @@ void loop()
         client.println("<html>");
 
         time_t now = time(nullptr);
-        strcpy(tmp, ctime(&now));
-        client.println(tmp);
+        strcpy(strbuffer, ctime(&now));
+        client.println(strbuffer);
         client.println("<br><br>");
 
-        float humidity = 0;
-        if (!isnan(humidity))
+        if (!isnan(temperature))
         {
-            client.print("Humidity: ");
-            client.print(dtostrf(humidity, 0, 0, tmp));
+            client.print("Temperature: ");
+            client.print(dtostrf(temperature, 0, 0, strbuffer));
             client.println(" %<br/>\n");
         }
-        // client.println("<br><br>");
-        // client.println("<a href=\"/LED=ON\"\"><button>Turn On </button></a>");
-        // client.println("<a href=\"/LED=OFF\"\"><button>Turn Off </button></a><br />");
         client.println("</html>");
      }
      //end web server
