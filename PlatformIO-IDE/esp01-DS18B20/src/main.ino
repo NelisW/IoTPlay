@@ -25,6 +25,8 @@ IPAddress ipSubnetMask(255, 255, 255, 0);
 
 //start time of day block
 #include <time.h>
+bool timeofDayValid;
+//end time of day block
 
 #include "../../../../openHABsysfiles/password.h"
 //#define wifi_ssid "yourwifiSSID"
@@ -49,7 +51,7 @@ OneWire oneWire(DS18GPIO00);
 DallasTemperature tempsensor(&oneWire);
 #define TEMPERATURE_PRECISION 9
 // arrays to hold device addresses
-DeviceAddress t0, t1, t2, t3;
+DeviceAddress * devAddr;
 //end DS18B20 sensor
 
 //Interrupt and timer callbacks and flags
@@ -59,6 +61,7 @@ volatile bool aliveTick;   //flag set by ISR, must be volatile
 os_timer_t aliveTimer; // send alive signals every so often
 void aliveTimerCallback(void *pArg){aliveTick = true;} // when alive timer elapses
 
+////////////////////////////////////////////////////////////////////////////////
 void setup_wifi()
 {
     delay(10);
@@ -123,6 +126,7 @@ void setup_wifi()
     Serial.println(ESP.getFreeSketchSpace());
 }
 
+////////////////////////////////////////////////////////////////////////////////
 // a little wrapper function to print to serial if publish failed
 void publishMQTT(const char* topic, const char* payload)
 {
@@ -135,6 +139,7 @@ void publishMQTT(const char* topic, const char* payload)
 }
 
 
+////////////////////////////////////////////////////////////////////////////////
 void mqttReconnect()
 {
     while (!mqttclient.connected())
@@ -157,69 +162,61 @@ void mqttReconnect()
     }
 }
 
+////////////////////////////////////////////////////////////////////////////////
 //start time of day block
-void synchroniseLocalTime()
+bool synchroniseLocalTime()
 {
     //we are not overly concerned with the real time,
     //just do it as init values and once per day
+    bool timeofDayValid = false;
+    int timeCnt = 0;
     if (WiFi.status() == WL_CONNECTED)
     {
         //my timezone is 2 hours ahead of GMT
+        int timeCntMax = 5;
         configTime(2 * 3600, 0, "pool.ntp.org", "time.nist.gov");
         Serial.print("Waiting for local time update ");
-        while (!time(nullptr))
+        while (!time(nullptr) && timeCnt<timeCntMax)
             {
               Serial.print(".");
               delay(1000);
+              timeCnt++;
             }
         time_t now = time(nullptr);
-        publishMQTT("home/DS18B20S0/timesynchronised", ctime(&now));
-        Serial.println(" updated.");
+        if (timeCnt<timeCntMax) {
+          timeofDayValid = true;
+          Serial.println(" updated.");
+          publishMQTT("home/DS18B20S0/timesynchronised/true", ctime(&now));
+        }
+        else
+        {
+          timeofDayValid = false;
+          publishMQTT("home/DS18B20S0/timesynchronised/false", ctime(&now));
+          Serial.println(" not updated.");
+        }
     }
+    return (timeofDayValid);
 }
 //end time of day block
 
+////////////////////////////////////////////////////////////////////////////////
 //start DS18B20 sensor
-// function to print a device address
-void printAddress(DeviceAddress deviceAddress)
+//return a string representation of the device address
+String stringAddress(DeviceAddress deviceAddress)
 {
+  String str="";
   for (uint8_t i = 0; i < 8; i++)
   {
     // zero pad the address if necessary
-    if (deviceAddress[i] < 16) Serial.print("0");
-    Serial.print(deviceAddress[i], HEX);
+    if (deviceAddress[i] < 16) str = String(str + "0");
+    str = String(str + String(deviceAddress[i], HEX));
   }
-}
-
-// function to print the temperature for a device
-void printTemperature(DeviceAddress deviceAddress)
-{
-  float tempC = tempsensor.getTempC(deviceAddress);
-  Serial.print("Temp C: ");
-  Serial.print(tempC);
-  Serial.print(" Temp F: ");
-  Serial.print(DallasTemperature::toFahrenheit(tempC));
-}
-
-// function to print a device's resolution
-void printResolution(DeviceAddress deviceAddress)
-{
-  Serial.print("Resolution: ");
-  Serial.print(tempsensor.getResolution(deviceAddress));
-  Serial.println();
-}
-
-// main function to print information about a device
-void printData(DeviceAddress deviceAddress)
-{
-  Serial.print("Device Address: ");
-  printAddress(deviceAddress);
-  Serial.print(" ");
-  printTemperature(deviceAddress);
-  Serial.println();
+  return (str);
 }
 //end DS18B20 sensor
 
+
+////////////////////////////////////////////////////////////////////////////////
 void setup()
 {
     Serial.begin(115200);
@@ -231,10 +228,7 @@ void setup()
 
     //set up mqtt and register the callback to subscribe
     mqttclient.setServer(mqtt_server, 1883);
-    if (!mqttclient.connected())
-    {
-        mqttReconnect();
-    }
+    if (!mqttclient.connected()) {  mqttReconnect(); }
 
     //start DS18B20 sensor
     pinMode(DS18GPIO00, INPUT);
@@ -250,29 +244,21 @@ void setup()
     Serial.print("Parasite power is: ");
     if (tempsensor.isParasitePowerMode()) Serial.println("ON"); else Serial.println("OFF");
 
-    if (!tempsensor.getAddress(t0, 0)) Serial.println("Unable to find address for Device 0");
-    if (!tempsensor.getAddress(t1, 1)) Serial.println("Unable to find address for Device 1");
-
-    // show the addresses we found on the bus
-    Serial.print("Device 0 Address: ");
-    printAddress(t0);
-    Serial.println();
-
-    Serial.print("Device 1 Address: ");
-    printAddress(t1);
-    Serial.println();
-
-    // set the resolution to 9 bit per device
-    tempsensor.setResolution(t0, TEMPERATURE_PRECISION);
-    tempsensor.setResolution(t1, TEMPERATURE_PRECISION);
-
-    Serial.print("Device 0 Resolution: ");
-    Serial.print(tempsensor.getResolution(t0), DEC);
-    Serial.println();
-
-    Serial.print("Device 1 Resolution: ");
-    Serial.print(tempsensor.getResolution(t1), DEC);
-    Serial.println();
+    devAddr = (DeviceAddress*) calloc(tempsensor.getDeviceCount(), sizeof(DeviceAddress));
+    for (uint8_t i = 0; i < tempsensor.getDeviceCount(); i++)
+    {
+      tempsensor.getAddress(devAddr[i], i);
+      if (devAddr[i])
+      {
+        // tempsensor.setResolution(devAddr[i], TEMPERATURE_PRECISION);
+        Serial.print("Device Address: ");
+        Serial.print(stringAddress(devAddr[i]));
+        Serial.print(" ");
+        Serial.print("Resolution: ");
+        Serial.print(tempsensor.getResolution(devAddr[i]), DEC);
+        Serial.println();
+      }
+    }
     //end DS18B20 sensor
 
     //init values
@@ -284,10 +270,13 @@ void setup()
     os_timer_arm(&aliveTimer, aliveTimout, true);
 
     // get wall clock time from the servers
-    synchroniseLocalTime();
+    timeofDayValid = synchroniseLocalTime();
+
     Serial.println("Setup completed!");
 }
 
+
+////////////////////////////////////////////////////////////////////////////////
 void loop()
 {
     //start OTA block
@@ -299,57 +288,68 @@ void loop()
 
     float temperature;
     temperature = 0. ;
-    char strbuffer[120] ;
+    String httpString = "Temperature not currently available";
+    char nowStr[120] ;
 
     // timer interrupt woke us up again
     if (aliveTick == true)
     {
         aliveTick = false;
+        httpString = String("<H1> DS18B20 Temperatures</H1>");
+        httpString = httpString + String("<table border=""1"">");
+        httpString = httpString + String("<tr><th>Time</th><th>Device</th><th>Temperature C</th></tr>");
+
         time_t now = time(nullptr);
+        strcpy(nowStr, ctime(&now)); // get rid of newline
+        nowStr[strlen(nowStr)-1] = '\0';
 
         //start DS18B20 sensor
-        bool SingleTemperatureSensor = false;
-        if (SingleTemperatureSensor)
+        // call sensors.requestTemperatures() to issue a global temperature
+        // request to all devices on the bus
+        tempsensor.requestTemperatures();
+        delay (400); //wait for result
+        // for all devices
+        for (uint8_t i = 0; i < tempsensor.getDeviceCount(); i++)
         {
-          tempsensor.requestTemperatures();
-          delay (400); //wait for result
-          temperature = tempsensor.getTempCByIndex(0);
-          //Arduino don't have float formatting for sprintf
-          //so copy the time to buffer, format float and overwrite \r\n
-          strcpy(strbuffer, ctime(&now));
-          dtostrf(temperature, 7, 1, &strbuffer[strlen(strbuffer)-1]);
-          publishMQTT("home/DS18B20S0/temperatureDS18B20-TC",strbuffer);
-          Serial.println(strbuffer);
-          //also publish a shorter version with only the numeric
-          publishMQTT("home/DS18B20S0/temperatureDS18B20-C",dtostrf(temperature, 0, 1, strbuffer));
+          tempsensor.getAddress(devAddr[i], i);
+          if (devAddr[i])
+          {
+            temperature = tempsensor.getTempC(devAddr[i]);
+
+            String spc = String(" ");
+            String sls = String("/");
+            String tros = String("<tr>");
+            String troe = String("</tr>");
+            String tcos = String("<td>");
+            String tcoe = String("</td>");
+            String str = String(nowStr)+spc+String(temperature);
+            String strM = String("home/DS18B20S0/temperature")+sls+stringAddress(devAddr[i]);
+            String strML = strM + String("T");
+            httpString = httpString + tros
+            + tcos + String(nowStr) + tcoe
+            + tcos + stringAddress(devAddr[i]) + tcoe
+            + tcos + String(temperature) + tcoe
+            + troe + String("<BR>");
+
+            // mqtt publish shorter and longer versions: time+temp or just temp
+            publishMQTT(strM.c_str(),String(temperature).c_str());
+            publishMQTT(strML.c_str(),str.c_str());
+
+            Serial.println(stringAddress(devAddr[i])+spc+str);
+          }
         }
-        else
-        {
-          // call sensors.requestTemperatures() to issue a global temperature
-          // request to all devices on the bus
-          Serial.print("Requesting temperatures...");
-          tempsensor.requestTemperatures();
-          delay (400); //wait for result
-          Serial.println("DONE");
-          // print the device information
-          printData(t0);
-          printData(t1);
-        }
-
-
-
         //end DS18B20 sensor
+        httpString = httpString + String("</table>");
 
         //start time of day block
-        //sync with the NTP server every day at noon
+        //sync with the NTP server every day at noon or if we do not have valid time
         now = time(nullptr);
         struct tm* p_tm = localtime(&now);
-        if (p_tm->tm_hour==12 && p_tm->tm_min==0 && p_tm->tm_sec<aliveTimout/1000)
+        if (! timeofDayValid || (p_tm->tm_hour==12 && p_tm->tm_min==0 && p_tm->tm_sec<aliveTimout/1000))
         {
-            synchroniseLocalTime();
+            timeofDayValid = synchroniseLocalTime();
         }
         //end time of day block
-        Serial.println("Alive");
     }
 
      // Check if a client has connected to our web server
@@ -362,18 +362,21 @@ void loop()
         client.println(""); //  do not forget this one
         client.println("<!DOCTYPE HTML>");
         client.println("<html>");
+        client.println(httpString);
 
-        time_t now = time(nullptr);
-        strcpy(strbuffer, ctime(&now));
-        client.println(strbuffer);
-        client.println("<br><br>");
-
-        if (!isnan(temperature))
-        {
-            client.print("Temperature: ");
-            client.print(dtostrf(temperature, 0, 0, strbuffer));
-            client.println(" %<br/>\n");
-        }
+        // time_t now = time(nullptr);
+        // strcpy(strbuffer, ctime(&now));
+        // client.println(strbuffer);
+        //
+        // client.println("<br><br>");
+        //
+        // if (!isnan(temperature))
+        // {
+        //     client.print("Temperature: ");
+        //     client.print(dtostrf(temperature, 0, 0, strbuffer));
+        //     client.println(" %<br/>\n");
+        // }
+        client.println("<BR>");
         client.println("</html>");
      }
      //end web server
