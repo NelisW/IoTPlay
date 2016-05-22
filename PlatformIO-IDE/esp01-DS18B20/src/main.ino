@@ -51,7 +51,7 @@ OneWire oneWire(DS18GPIO00);
 DallasTemperature tempsensor(&oneWire);
 #define TEMPERATURE_PRECISION 9
 // arrays to hold device addresses
-DeviceAddress * devAddr;
+DeviceAddress * ds18b20Addr;
 //end DS18B20 sensor
 
 //Interrupt and timer callbacks and flags
@@ -172,8 +172,8 @@ bool synchroniseLocalTime()
     int timeCnt = 0;
     if (WiFi.status() == WL_CONNECTED)
     {
-        //my timezone is 2 hours ahead of GMT
         int timeCntMax = 5;
+        //my timezone is 2 hours ahead of GMT
         configTime(2 * 3600, 0, "pool.ntp.org", "time.nist.gov");
         Serial.print("Waiting for local time update ");
         while (!time(nullptr) && timeCnt<timeCntMax)
@@ -244,18 +244,18 @@ void setup()
     Serial.print("Parasite power is: ");
     if (tempsensor.isParasitePowerMode()) Serial.println("ON"); else Serial.println("OFF");
 
-    devAddr = (DeviceAddress*) calloc(tempsensor.getDeviceCount(), sizeof(DeviceAddress));
+    ds18b20Addr = (DeviceAddress*) calloc(tempsensor.getDeviceCount(), sizeof(DeviceAddress));
     for (uint8_t i = 0; i < tempsensor.getDeviceCount(); i++)
     {
-      tempsensor.getAddress(devAddr[i], i);
-      if (devAddr[i])
+      tempsensor.getAddress(ds18b20Addr[i], i);
+      if (ds18b20Addr[i])
       {
-        // tempsensor.setResolution(devAddr[i], TEMPERATURE_PRECISION);
+        // tempsensor.setResolution(ds18b20Addr[i], TEMPERATURE_PRECISION);
         Serial.print("Device Address: ");
-        Serial.print(stringAddress(devAddr[i]));
+        Serial.print(stringAddress(ds18b20Addr[i]));
         Serial.print(" ");
         Serial.print("Resolution: ");
-        Serial.print(tempsensor.getResolution(devAddr[i]), DEC);
+        Serial.print(tempsensor.getResolution(ds18b20Addr[i]), DEC);
         Serial.println();
       }
     }
@@ -311,10 +311,10 @@ void loop()
         // for all devices
         for (uint8_t i = 0; i < tempsensor.getDeviceCount(); i++)
         {
-          tempsensor.getAddress(devAddr[i], i);
-          if (devAddr[i])
+          tempsensor.getAddress(ds18b20Addr[i], i);
+          if (ds18b20Addr[i])
           {
-            temperature = tempsensor.getTempC(devAddr[i]);
+            temperature = tempsensor.getTempC(ds18b20Addr[i]);
 
             String spc = String(" ");
             String sls = String("/");
@@ -323,11 +323,11 @@ void loop()
             String tcos = String("<td>");
             String tcoe = String("</td>");
             String str = String(nowStr)+spc+String(temperature);
-            String strM = String("home/DS18B20S0/temperature")+sls+stringAddress(devAddr[i]);
+            String strM = String("home/DS18B20S0/temperature")+sls+stringAddress(ds18b20Addr[i]);
             String strML = strM + String("T");
             httpString = httpString + tros
             + tcos + String(nowStr) + tcoe
-            + tcos + stringAddress(devAddr[i]) + tcoe
+            + tcos + stringAddress(ds18b20Addr[i]) + tcoe
             + tcos + String(temperature) + tcoe
             + troe + String("<BR>");
 
@@ -335,7 +335,7 @@ void loop()
             publishMQTT(strM.c_str(),String(temperature).c_str());
             publishMQTT(strML.c_str(),str.c_str());
 
-            Serial.println(stringAddress(devAddr[i])+spc+str);
+            Serial.println(stringAddress(ds18b20Addr[i])+spc+str);
           }
         }
         //end DS18B20 sensor
