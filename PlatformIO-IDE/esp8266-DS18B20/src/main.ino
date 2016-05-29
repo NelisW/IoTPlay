@@ -1,6 +1,11 @@
 /*
-Read all the DS18B20 temperature sensors on the wire
-and publish to MQTT topic
+Read all the DS18B20 temperature sensors on the wire interface and
+- publish to MQTT topic.
+- publish to Weather Underground as additional temperatures.
+- publish on a web server.
+
+Brief description is given here:
+https://github.com/NelisW/myOpenHab/blob/master/docs/423-ESP-multi-DS18B20.md
 */
 
 extern "C"
@@ -426,7 +431,7 @@ void loop()
             String tcos = String("<td>");
             String tcoe = String("</td>");
             String str = String(nowStr)+spc+String(temperature);
-            String strM = String("home/DS18B20S0/temperature")+sls+stringAddress(ds18b20Addr[i]);
+            String strM = String("home/DS18B20/temperatureC")+sls+stringAddress(ds18b20Addr[i]);
             String strML = strM + String("T");
             httpString = httpString + tros
                           + tcos + String(nowStr) + tcoe
