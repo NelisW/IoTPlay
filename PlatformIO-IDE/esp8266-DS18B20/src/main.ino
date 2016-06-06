@@ -47,7 +47,6 @@ bool uploadtoWU = false;
 #include <ESP8266WebServer.h>
 #include "WiFiManager.h"  //https://github.com/tzapu/WiFiManager
 #include <ArduinoJson.h>          //https://github.com/bblanchon/ArduinoJson
-WiFiManager wifiManager;
 #define WiFiManGPIO00 0  // demand WifiManager hardware captive portal (GPIO00 must go low)
 bool shouldSaveConfig = false; //flag for saving data to file system
 
@@ -56,13 +55,6 @@ bool shouldSaveConfig = false; //flag for saving data to file system
 //start http client GET block
 #include <ESP8266HTTPClient.h>
 //end http client GET block
-
-// start fixed IP block
-// put the following in platformio.ini: 'upload_port = 10.0.0.32'.
-// IPAddress ipLocal(10, 0, 0, 32);
-// IPAddress ipGateway(10, 0, 0, 2);
-// IPAddress ipSubnetMask(255, 255, 255, 0);
-// end fixed IP block
 
 //start time of day block
 //https://github.com/PaulStoffregen/Time
@@ -98,7 +90,7 @@ WiFiClient espClient;
 //start mqtt block
 #include <PubSubClient.h>
 PubSubClient mqttclient(espClient);
-char mqtt_server[40] = "10.0.0.16";
+char mqtt_server[40] = "10.0.0.99";
 char mqtt_user[40];
 char mqtt_password[40];
 char mqtt_port[6] = "1883";
@@ -126,8 +118,8 @@ void aliveTimerCallback(void *pArg){aliveTick = true;} // when alive timer elaps
 
 //begin wifi manager block
 //default custom static IP
-char static_ip[16] = "10.0.0.32";
-char static_gw[16] = "10.0.0.2";
+char static_ip[16] = "192.0.0.32";
+char static_gw[16] = "192.0.0.2";
 char static_sn[16] = "255.255.255.0";
 //end wifi manager block
 
@@ -303,7 +295,7 @@ bool mqttReconnect()
 //callback notifying us of the need to save config
 void saveConfigCallback ()
 {
-  Serial.println("Should save config");
+  Serial.println("saveConfigCallback: should save config");
   shouldSaveConfig = true;
 }
 
@@ -317,16 +309,19 @@ void configModeCallback (WiFiManager *myWiFiManager)
 ////////////////////////////////////////////////////////////////////////////////
 void setup_wifimanager(void)
 {
+  Serial.println("entering setup_wifimanager() ...");
   //Local intialization. Once its business is done, there is no need to keep it around
+  WiFiManager wifiManager;
   wifiManager.setDebugOutput(true);
 
   // The extra parameters to be configured (can be either global or just in the setup)
   // After connecting, parameter.getValue() will get you the configured value
   // id/name placeholder/prompt default length
   WiFiManagerParameter custom_mqtt_server("server", "mqtt server", mqtt_server, 40);
-  WiFiManagerParameter custom_mqtt_port("port", "mqtt port", mqtt_port, 5);
+  WiFiManagerParameter custom_mqtt_port("port", "mqtt port", mqtt_port, 6);
   WiFiManagerParameter custom_mqtt_user("user", "mqtt user", mqtt_user, 40);
   WiFiManagerParameter custom_mqtt_password("password", "mqtt password", mqtt_password, 40);
+
 
   //set config save notify callback
   wifiManager.setSaveConfigCallback(saveConfigCallback);
@@ -348,18 +343,19 @@ void setup_wifimanager(void)
   //reset saved settings
   //wifiManager.resetSettings();
 
-  //set minimu quality of signal so it ignores AP's under that quality
-  //defaults to 8%
-  wifiManager.setMinimumSignalQuality();
+  //set minimum quality of signal so it ignores AP's under that quality defaults to 8%
+  //wifiManager.setMinimumSignalQuality();
 
-  //set callback that gets called when connecting to previous WiFi fails, and enters Access Point mode
-  //wifiManager.setAPCallback(configModeCallback);
+  //sets timeout until configuration portal gets turned off, useful to make it all retry or go to sleep. in seconds
+//  wifiManager.setTimeout(120);
+
+  //////set callback that gets called when connecting to previous WiFi fails, and enters Access Point mode
+//////wifiManager.setAPCallback(configModeCallback);
 
   //fetches ssid and pass and tries to connect
   //if it does not connect it starts an access point with the specified name
-  wifiManager.setTimeout(600);
-  //and goes into a blocking loop awaiting configuration
-  if (!wifiManager.autoConnect("DS18B20","12345678"))
+  //and go into a blocking loop awaiting configuration
+if (!wifiManager.autoConnect("AutoConnectAP"))
   {
     Serial.println("failed to connect and hit timeout");
     delay(3000);
@@ -368,6 +364,9 @@ void setup_wifimanager(void)
     delay(5000);
   }
 
+  //if you get here you have connected to the WiFi
+  Serial.println("connected...yeey :)");
+
   //read updated parameters
   strcpy(mqtt_server, custom_mqtt_server.getValue());
   strcpy(mqtt_port, custom_mqtt_port.getValue());
@@ -375,7 +374,9 @@ void setup_wifimanager(void)
   strcpy(mqtt_password, custom_mqtt_password.getValue());
 
   //save the custom parameters to FS
-  if (shouldSaveConfig)
+  Serial.print("---- shouldSaveConfig");
+  Serial.println(shouldSaveConfig);
+if (shouldSaveConfig)
   {
     Serial.println("saving config");
     DynamicJsonBuffer jsonBuffer;
@@ -401,9 +402,11 @@ void setup_wifimanager(void)
     //end save
   }
 
+  Serial.println("leaving setup_wifimanager() ...");
 
 }
 //end wifi manager block
+
 ////////////////////////////////////////////////////////////////////////////////
 void setup_wifi()
 {
@@ -411,8 +414,17 @@ void setup_wifi()
     //set up the pin to be used to demand captive portal
     pinMode(WiFiManGPIO00, INPUT);
 
-    delay(10);
-    Serial.print("Connecting to WiFi network: ");
+    readConfigSpiffs();
+
+    Serial.println("After readConfigSpiffs():");
+    Serial.print("static_ip: ");    Serial.println(static_ip);
+    Serial.print("mqtt_server: ");    Serial.println(mqtt_server);
+    Serial.print("mqtt_port: ");    Serial.println(mqtt_port);
+    Serial.print("mqtt_user: ");    Serial.println(mqtt_user);
+    Serial.print("mqtt_password: ");    Serial.println(mqtt_password);
+
+    //delay(10);
+  //  Serial.print("Connecting to WiFi network: ");
   //   Serial.println(wifi_ssid);
   //   if (0)
   //   {
@@ -488,18 +500,21 @@ void readConfigSpiffs()
 {
 
   //clean FS, for testing
-  SPIFFS.format();
+  //SPIFFS.format();
 
   //read configuration from FS json
-  Serial.println("mounting FS...");
+  Serial.println("entering readConfigSpiffs...");
 
   if (SPIFFS.begin())
   {
-      if (SPIFFS.exists("/config.json")) {
+      Serial.println("mounted file system");
+      if (SPIFFS.exists("/config.json"))
+      {
       //file exists, reading and loading
       Serial.println("reading config file");
       File configFile = SPIFFS.open("/config.json", "r");
-      if (configFile) {
+      if (configFile)
+      {
         Serial.println("opened config file");
         size_t size = configFile.size();
         // Allocate a buffer to store contents of the file.
@@ -532,21 +547,33 @@ void readConfigSpiffs()
 /*            Serial.println("converting ip");
             IPAddress ip = ipFromCharArray(static_ip);
             Serial.println(ip);*/
-          } else
+          }
+          else
           {
             Serial.println("no custom ip in config");
           }
-        } else
+        }
+        else
         {
           Serial.println("failed to load json config");
         }
       }
+      else
+      {
+        Serial.println("unable to open config file /config.json");
+      }
     }
-  } else
+    else
+    {
+      Serial.println("config file /config.json does not exist");
+    }
+  }
+  else
   {
-    Serial.println("failed to mount FS");
+    Serial.println("failed to mount file system");
   }
   //end read
+  Serial.println("leaving readConfigSpiffs...");
 
 }
 
@@ -559,17 +586,6 @@ void setup()
     Serial.println("-------------------------------");
     Serial.println("ESP8266 with WiFiManager and DS18B20 sensors with MQTT notification");
 
-    //for testing: force the captive portal
-    //testWifiManPortalRequested();
-
-    readConfigSpiffs();
-
-    Serial.println("After reading in from config file:");
-    Serial.println(static_ip);
-    Serial.println(mqtt_server);
-    Serial.println(mqtt_port);
-    Serial.println(mqtt_user);
-    Serial.println(mqtt_password);
 
     setup_wifi();
 
@@ -667,7 +683,7 @@ void testWifiManPortalRequested()
     //WITHOUT THIS THE AP DOES NOT SEEM TO WORK PROPERLY WITH SDK 1.5 , update to at least 1.5.1
     //WiFi.mode(WIFI_STA);
 
-    if (!wifiManager.startConfigPortal("OnDemandAP")) {
+    if (!wifiManager.startConfigPortal("AutoConnectAP")) {
       Serial.println("failed to connect and hit timeout");
       delay(3000);
       //reset and try again, or maybe put it to deep sleep
@@ -683,9 +699,9 @@ void testWifiManPortalRequested()
 void loop()
 {
   // is configuration portal requested?
-  if ( digitalRead(WiFiManGPIO00) == LOW ) {
-    testWifiManPortalRequested();
-  }
+  // if ( digitalRead(WiFiManGPIO00) == LOW ) {
+  //   testWifiManPortalRequested();
+  // }
 
     //start OTA block
     ArduinoOTA.handle();
