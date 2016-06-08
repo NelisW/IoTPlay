@@ -15,9 +15,8 @@ Requires the following libraries (in the platformio terminal):
 5. Json: platformio lib install 64
 
 todo:
-mqtt password
-mqtt topic
-wunderground
+OTA test
+
 */
 
 
@@ -25,11 +24,6 @@ extern "C"
 {
     #include "user_interface.h"
 }
-
-#define wunderground_ID "IGAUTENG211"
-#define wunderground_password "coat68-pot"
-bool uploadtoWU = false;
-
 
 #include <FS.h>                   // filesstem: this needs to be first, or it all crashes and burns...
 
@@ -41,6 +35,10 @@ bool uploadtoWU = false;
 #include <ArduinoOTA.h>
 //end OTA block
 
+#define INT6 6
+#define INT40 40
+#define INT64 64
+
 
 //begin wifi manager block
 #include <DNSServer.h>            //Local DNS Server used for redirecting all requests to the configuration portal
@@ -48,8 +46,9 @@ bool uploadtoWU = false;
 #include "WiFiManager.h"  //https://github.com/tzapu/WiFiManager
 #include <ArduinoJson.h>          //https://github.com/bblanchon/ArduinoJson
 #define WiFiManGPIO00 0  // demand WifiManager hardware captive portal (GPIO00 must go low)
+#define CAPTIVEPORTALSSID "AutoConnectAP"
+#define CAPTIVEPORTALPASSWD "Bug35*able"
 bool shouldSaveConfig = false; //flag for saving data to file system
-
 //end wifi manager block
 
 //start http client GET block
@@ -67,35 +66,26 @@ bool timeofDayValid;
 
 //end time of day block
 
-//#include "../../../../openHABsysfiles/password.h"
-//define your default values here, if there are different values in config.json, they are overwritten.
-//length should be max size + 1 //#define wifi_ssid "yourwifiSSID"
-
-//#define wifi_password "yourwifipassword"
-//#define mqtt_server "yourmqttserverIP"
-
-//#define mqtt_user "yourmqttserverusername"
-//#define mqtt_password "yourmqttserverpassword"
-
-//#define wunderground_ID "yourweatherundergroundserverusername"
-//#define wunderground_password "yourweatherundergroundserverpassword"
-
 //start web server
 WiFiServer wifiserver(80);
 //end web server
 
 WiFiClient espClient;
 
-
 //start mqtt block
 #include <PubSubClient.h>
 PubSubClient mqttclient(espClient);
-char mqtt_server[40] = "10.0.0.99";
-char mqtt_user[40];
-char mqtt_password[40];
-char mqtt_port[6] = "1883";
-
+char mqtt_server[INT40];
+char mqtt_user[INT40];
+char mqtt_password[INT40];
+char mqtt_port[INT6];
+char mqtt_topic[INT64];
 //end mqtt block
+
+//start weatherunderground block
+char wuground_station[INT40];
+char wuground_password[INT40];
+//end weatherunderground block
 
 //start DS18B20 sensor
 #include <OneWire.h>
@@ -118,7 +108,7 @@ void aliveTimerCallback(void *pArg){aliveTick = true;} // when alive timer elaps
 
 //begin wifi manager block
 //default custom static IP
-char static_ip[16] = "192.0.0.32";
+char static_ip[16] = "192.0.0.99";
 char static_gw[16] = "192.0.0.2";
 char static_sn[16] = "255.255.255.0";
 //end wifi manager block
@@ -271,11 +261,21 @@ bool mqttReconnect()
       cnt++;
         Serial.print("Attempting MQTT connection...");
         // If you do not want to use a username and password, change next line to
-        // if (mqttclient.connect("ESP8266Client", mqtt_user, mqtt_password))
-        if (mqttclient.connect("ESP8266Client"))
+        // if ()
+        bool connectstatus = false;
+        if (strlen(mqtt_user)>0  && strlen(mqtt_password)>0)
+        {
+          connectstatus = mqttclient.connect("ESP8266Client", mqtt_user, mqtt_password);
+        }
+        else
+        {
+          connectstatus = mqttclient.connect("ESP8266Client");
+        }
+
+        if (connectstatus)
         {
             Serial.println("connected");
-            publishMQTT("home/DS18B20S0/alive", "DS18B20S0 online");
+            publishMQTT(mqtt_topic, "online");
             mqttConnected = true;
         }
         else
@@ -317,11 +317,13 @@ void setup_wifimanager(void)
   // The extra parameters to be configured (can be either global or just in the setup)
   // After connecting, parameter.getValue() will get you the configured value
   // id/name placeholder/prompt default length
-  WiFiManagerParameter custom_mqtt_server("server", "mqtt server", mqtt_server, 40);
-  WiFiManagerParameter custom_mqtt_port("port", "mqtt port", mqtt_port, 6);
-  WiFiManagerParameter custom_mqtt_user("user", "mqtt user", mqtt_user, 40);
-  WiFiManagerParameter custom_mqtt_password("password", "mqtt password", mqtt_password, 40);
-
+  WiFiManagerParameter custom_mqtt_server("server", "mqtt server", mqtt_server, INT40);
+  WiFiManagerParameter custom_mqtt_port("port", "mqtt port", mqtt_port, INT6);
+  WiFiManagerParameter custom_mqtt_user("user", "mqtt user", mqtt_user, INT40);
+  WiFiManagerParameter custom_mqtt_password("password", "mqtt password", mqtt_password, INT40);
+  WiFiManagerParameter custom_mqtt_topic("topic", "mqtt topic", mqtt_topic, INT64);
+  WiFiManagerParameter custom_wuground_station("wuground station", "wuground station", wuground_station, INT40);
+  WiFiManagerParameter custom_wuground_password("wuground password", "wuground password", wuground_password, INT40);
 
   //set config save notify callback
   wifiManager.setSaveConfigCallback(saveConfigCallback);
@@ -339,6 +341,9 @@ void setup_wifimanager(void)
   wifiManager.addParameter(&custom_mqtt_port);
   wifiManager.addParameter(&custom_mqtt_user);
   wifiManager.addParameter(&custom_mqtt_password);
+  wifiManager.addParameter(&custom_mqtt_topic);
+  wifiManager.addParameter(&custom_wuground_station);
+  wifiManager.addParameter(&custom_wuground_password);
 
   //reset saved settings
   //wifiManager.resetSettings();
@@ -355,7 +360,7 @@ void setup_wifimanager(void)
   //fetches ssid and pass and tries to connect
   //if it does not connect it starts an access point with the specified name
   //and go into a blocking loop awaiting configuration
-if (!wifiManager.autoConnect("AutoConnectAP"))
+if (!wifiManager.autoConnect(CAPTIVEPORTALSSID,CAPTIVEPORTALPASSWD))
   {
     Serial.println("failed to connect and hit timeout");
     delay(3000);
@@ -372,6 +377,9 @@ if (!wifiManager.autoConnect("AutoConnectAP"))
   strcpy(mqtt_port, custom_mqtt_port.getValue());
   strcpy(mqtt_user, custom_mqtt_user.getValue());
   strcpy(mqtt_password, custom_mqtt_password.getValue());
+  strcpy(mqtt_topic, custom_mqtt_topic.getValue());
+  strcpy(wuground_station, custom_wuground_station.getValue());
+  strcpy(wuground_password, custom_wuground_password.getValue());
 
   //save the custom parameters to FS
   Serial.print("---- shouldSaveConfig");
@@ -385,6 +393,9 @@ if (shouldSaveConfig)
     json["mqtt_port"] = mqtt_port;
     json["mqtt_user"] = mqtt_user;
     json["mqtt_password"] = mqtt_password;
+    json["mqtt_topic"] = mqtt_topic;
+    json["wuground_station"] = wuground_station;
+    json["wuground_password"] = wuground_password;
 
     json["ip"] = WiFi.localIP().toString();
     json["gateway"] = WiFi.gatewayIP().toString();
@@ -422,6 +433,9 @@ void setup_wifi()
     Serial.print("mqtt_port: ");    Serial.println(mqtt_port);
     Serial.print("mqtt_user: ");    Serial.println(mqtt_user);
     Serial.print("mqtt_password: ");    Serial.println(mqtt_password);
+    Serial.print("mqtt_topic: ");    Serial.println(mqtt_topic);
+    Serial.print("wuground_station: ");    Serial.println(wuground_station);
+    Serial.print("wuground_password: ");    Serial.println(wuground_password);
 
     //delay(10);
   //  Serial.print("Connecting to WiFi network: ");
@@ -532,6 +546,9 @@ void readConfigSpiffs()
           strcpy(mqtt_user, json["mqtt_user"]);
           strcpy(mqtt_password, json["mqtt_password"]);
           strcpy(mqtt_port, json["mqtt_port"]);
+          strcpy(mqtt_topic, json["mqtt_topic"]);
+          strcpy(wuground_station, json["wuground_station"]);
+          strcpy(wuground_password, json["wuground_password"]);
 
           if(json["ip"])
           {
@@ -596,14 +613,11 @@ void setup()
 
 
     //set up mqtt and register the callback to subscribe
-    Serial.print("Setting up MQTT to server """);
-    Serial.print(mqtt_server);
-    Serial.print(""" on port """);
-    Serial.print(mqtt_port);
-    Serial.print("""");
+    Serial.print("Setting up MQTT to server """); Serial.print(mqtt_server);
+    Serial.print(""" on port """);  Serial.print(mqtt_port);
+    Serial.print(""" with topic """);  Serial.print(mqtt_topic);    Serial.println("""");
 
     mqttclient.setServer(mqtt_server, String(mqtt_port).toInt());
-    //if (!mqttclient.connected()) {  mqttReconnect(); }
 
     //start DS18B20 sensor
     pinMode(DS18GPIO02, INPUT);
@@ -677,13 +691,11 @@ void testWifiManPortalRequested()
     //useful to make it all retry or go to sleep. in seconds
     //wifiManager.setTimeout(120);
 
-    //it starts an access point with the specified name "AutoConnectAP"
-    //and goes into a blocking loop awaiting configuration
-
     //WITHOUT THIS THE AP DOES NOT SEEM TO WORK PROPERLY WITH SDK 1.5 , update to at least 1.5.1
     //WiFi.mode(WIFI_STA);
 
-    if (!wifiManager.startConfigPortal("AutoConnectAP")) {
+    //it starts an access point and goes into a blocking loop awaiting configuration
+    if (!wifiManager.startConfigPortal(CAPTIVEPORTALSSID,CAPTIVEPORTALPASSWD)) {
       Serial.println("failed to connect and hit timeout");
       delay(3000);
       //reset and try again, or maybe put it to deep sleep
@@ -765,7 +777,7 @@ void loop()
             String tcos = String("<td>");
             String tcoe = String("</td>");
             String str = String(nowStr)+spc+String(temperature);
-            String strM = String("home/DS18B20/temperatureC")+sls+stringAddress(ds18b20Addr[i]);
+            String strM = String(mqtt_topic)+sls+stringAddress(ds18b20Addr[i]);
             String strML = strM + String("T");
             httpString = httpString + tros
                           + tcos + String(nowStr) + tcoe
@@ -790,6 +802,9 @@ void loop()
         timenow = now();
         //end time of day block
 
+        //Weather underground website
+        if (timeofDayValid && strlen(wuground_station)>0)
+       {
         //start http client GET block
         //https://github.com/esp8266/Arduino/tree/master/libraries/ESP8266HTTPClient
         //https://github.com/esp8266/Arduino/blob/master/libraries/ESP8266HTTPClient/src/ESP8266HTTPClient.h
@@ -799,7 +814,7 @@ void loop()
         //build the string to send to the server
 
         //example string, all the following on one line
-        //http://weatherstation.wunderground.com/weatherstation/updateweatherstation.php
+        //http://weatherstation.wuground.com/weatherstation/updateweatherstation.php
         //?ID=KCASANFR5&PASSWORD=XXXXXX&dateutc=2000-01-01+10%3A32%3A35&winddir=230&windspeedmph=12
         //&windgustmph=12&tempf=70&rainin=0&baromin=29.1&dewptf=68.2&humidity=90&weather=&clouds=
         //&softwaretype=vws%20versionxx&action=updateraw
@@ -820,11 +835,10 @@ void loop()
 
         time_t nowutc = timenow - TZHOURS * 3600;
 
-        //Weather underground website
-        String str = "http://weatherstation.wunderground.com/weatherstation/updateweatherstation.php";
+        String str = "http://weatherstation.wuground.com/weatherstation/updateweatherstation.php";
         //compulsory data
-        str = str + "?ID="+String(wunderground_ID);
-        str = str + "&PASSWORD="+String(wunderground_password);
+        str = str + "?ID="+String(wuground_station);
+        str = str + "&PASSWORD="+String(wuground_password);
         str = str + "&dateutc="+strDateTimeURL(nowutc);
         str = str + "&action=updateraw";
 
@@ -850,8 +864,6 @@ void loop()
 
         str = str + "&softwaretype=testing%20version00";
 
-        if (timeofDayValid && uploadtoWU)
-       {
          Serial.println(str);
           httpclient.begin(str); //HTTP
           // start connection and send HTTP header
