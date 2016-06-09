@@ -13,10 +13,6 @@ Requires the following libraries (in the platformio terminal):
 3. OneWire: install  with platformio lib install 1
 4. WifiManager: istall with platformio lib install 567
 5. Json: platformio lib install 64
-
-todo:
-OTA test
-
 */
 
 
@@ -46,7 +42,6 @@ extern "C"
 #include <ESP8266WebServer.h>
 #include "WiFiManager.h"  //https://github.com/tzapu/WiFiManager
 #include <ArduinoJson.h>          //https://github.com/bblanchon/ArduinoJson
-#define WiFiManGPIO00 0  // demand WifiManager hardware captive portal (GPIO00 must go low)
 #define CAPTIVEPORTALSSID "AutoConnectAP"
 #define CAPTIVEPORTALPASSWD "Bug35*able"
 bool shouldSaveConfig = false; //flag for saving data to file system
@@ -103,8 +98,7 @@ String httpString;
 //end DS18B20 sensor
 
 //Interrupt and timer callbacks and flags
-#define ALIVETIMEOUTPERIOD 5000
-int aliveTimout; // in milliseconds
+char alive_interval[INT18] = "5000";// in milliseconds
 volatile bool aliveTick;   //flag set by ISR, must be volatile
 os_timer_t aliveTimer; // send alive signals every so often
 void aliveTimerCallback(void *pArg){aliveTick = true;} // when alive timer elapses
@@ -327,6 +321,7 @@ void setup_wifimanager(void)
   WiFiManagerParameter custom_mqtt_topic("mqtttopic", "mqtt topic", mqtt_topic, INT64);
   WiFiManagerParameter custom_tspeak_host("tspeak_host", "thingspeak host", tspeak_host, INT40);
   WiFiManagerParameter custom_tspeak_key("tspeak_key", "thingspeak key", tspeak_key, INT18);
+  WiFiManagerParameter custom_alive_interval("alive_interval", "alive interval", alive_interval, INT18);
 
   //set config save notify callback
   wifiManager.setSaveConfigCallback(saveConfigCallback);
@@ -347,6 +342,7 @@ void setup_wifimanager(void)
   wifiManager.addParameter(&custom_mqtt_topic);
   wifiManager.addParameter(&custom_tspeak_host);
   wifiManager.addParameter(&custom_tspeak_key);
+  wifiManager.addParameter(&custom_alive_interval);
 
   //reset saved settings
   //wifiManager.resetSettings();
@@ -355,10 +351,8 @@ void setup_wifimanager(void)
   //wifiManager.setMinimumSignalQuality();
 
   //sets timeout until configuration portal gets turned off, useful to make it all retry or go to sleep. in seconds
-//  wifiManager.setTimeout(120);
+  //wifiManager.setTimeout(120);
 
-  //////set callback that gets called when connecting to previous WiFi fails, and enters Access Point mode
-//////wifiManager.setAPCallback(configModeCallback);
 
   //fetches ssid and pass and tries to connect
   //if it does not connect it starts an access point with the specified name
@@ -383,6 +377,8 @@ if (!wifiManager.autoConnect(CAPTIVEPORTALSSID,CAPTIVEPORTALPASSWD))
   strcpy(mqtt_topic, custom_mqtt_topic.getValue());
   strcpy(tspeak_host, custom_tspeak_host.getValue());
   strcpy(tspeak_key, custom_tspeak_key.getValue());
+  strcpy(alive_interval, custom_alive_interval.getValue());
+
 
   //save the custom parameters to FS
   Serial.print("---- shouldSaveConfig");
@@ -399,6 +395,9 @@ if (shouldSaveConfig)
     json["mqtt_topic"] = mqtt_topic;
     json["tspeak_host"] = tspeak_host;
     json["tspeak_key"] = tspeak_key;
+    json["alive_interval"] = alive_interval;
+
+
 
     json["ip"] = WiFi.localIP().toString();
     json["gateway"] = WiFi.gatewayIP().toString();
@@ -425,9 +424,6 @@ if (shouldSaveConfig)
 void setup_wifi()
 {
 
-    //set up the pin to be used to demand captive portal
-    pinMode(WiFiManGPIO00, INPUT);
-
     readConfigSpiffs();
 
     Serial.println("After readConfigSpiffs():");
@@ -439,6 +435,7 @@ void setup_wifi()
     Serial.print("mqtt_topic: ");    Serial.println(mqtt_topic);
     Serial.print("tspeak_host: ");    Serial.println(tspeak_host);
     Serial.print("tspeak_key: ");    Serial.println(tspeak_key);
+    Serial.print("alive_interval: ");    Serial.println(alive_interval);
 
     //delay(10);
   //  Serial.print("Connecting to WiFi network: ");
@@ -552,6 +549,7 @@ void readConfigSpiffs()
           strcpy(mqtt_topic, json["mqtt_topic"]);
           strcpy(tspeak_host, json["tspeak_host"]);
           strcpy(tspeak_key, json["tspeak_key"]);
+          strcpy(alive_interval, json["alive_interval"]);
 
           if(json["ip"])
           {
@@ -610,8 +608,8 @@ void setup()
     Serial.print("Setting up MQTT to server """); Serial.print(mqtt_server);
     Serial.print(""" on port """);  Serial.print(mqtt_port);
     Serial.print(""" with topic """);  Serial.print(mqtt_topic);    Serial.println("""");
-
     mqttclient.setServer(mqtt_server, String(mqtt_port).toInt());
+
 
     //start DS18B20 sensor
     pinMode(DS18GPIO02, INPUT);
@@ -650,11 +648,11 @@ void setup()
 
     //init values
     aliveTick = false;
-    aliveTimout  = ALIVETIMEOUTPERIOD; // in milliseconds
     //Define a function to be called when the timer fires
     os_timer_disarm(&aliveTimer);
     os_timer_setfn(&aliveTimer, aliveTimerCallback, NULL);
-    os_timer_arm(&aliveTimer, aliveTimout, true);
+    int alivetimer = String(alive_interval).toInt();
+    os_timer_arm(&aliveTimer, alivetimer, true);
 
     // begin NTP server time update
     // set up to do updates
@@ -671,46 +669,10 @@ void setup()
     Serial.println("Setup completed!");
 }
 
-/////////////////////////////////////////////////////////////////////////////////
-void testWifiManPortalRequested()
-{
 
-    //WiFiManager Local init. Once its business is done, there is no need to keep it around
-    WiFiManager wifiManager;
-
-    // reset settings - for testing
-    //wifiManager.resetSettings();
-    //SPIFFS.format();
-    // end reset settings - for testing
-
-    //sets timeout until configuration portal gets turned off
-    //useful to make it all retry or go to sleep. in seconds
-    //wifiManager.setTimeout(120);
-
-    //WITHOUT THIS THE AP DOES NOT SEEM TO WORK PROPERLY WITH SDK 1.5 , update to at least 1.5.1
-    //WiFi.mode(WIFI_STA);
-
-    //it starts an access point and goes into a blocking loop awaiting configuration
-    if (!wifiManager.startConfigPortal(CAPTIVEPORTALSSID,CAPTIVEPORTALPASSWD)) {
-      Serial.println("failed to connect and hit timeout");
-      delay(3000);
-      //reset and try again, or maybe put it to deep sleep
-      ESP.reset();
-      delay(5000);
-    }
-
-    //if you get here you have connected to the WiFi
-    Serial.println("Connected and captive portal should be online now)");
-
-}
 ////////////////////////////////////////////////////////////////////////////////
 void loop()
 {
-  // is configuration portal requested?
-  // if ( digitalRead(WiFiManGPIO00) == LOW ) {
-  //   testWifiManPortalRequested();
-  // }
-
     //start OTA block
     ArduinoOTA.handle();
     //end OTA block
@@ -721,7 +683,7 @@ void loop()
       {
         mqttclient.loop();
       }
-      }
+    }
 
     float temperature;
     temperature = 0. ;
@@ -729,6 +691,8 @@ void loop()
     time_t timenow = now();
     strcpy(nowStr, strDateTime(timenow).c_str()); // get rid of newline
     nowStr[strlen(nowStr)-1] = '\0';
+    String spc = String(" ");
+    String sls = String("/");
 
     // timer interrupt woke us up again
     if (aliveTick == true )
@@ -759,127 +723,112 @@ void loop()
         // for all devices
         for (uint8_t i = 0; i < numSensors; i++)
         {
-          tempsensor.getAddress(ds18b20Addr[i], i);
-          if (ds18b20Addr[i])
+            tempsensor.getAddress(ds18b20Addr[i], i);
+            if (ds18b20Addr[i])
+            {
+                ds18b20Temp[i] = tempsensor.getTempC(ds18b20Addr[i]);
+            }
+        }
+        //end DS18B20 sensor
+
+        //start mqtt block
+        if (timeofDayValid && strlen(mqtt_topic)>0)
+        {
+          for (uint8_t i = 0; i < numSensors; i++)
           {
-            ds18b20Temp[i] = tempsensor.getTempC(ds18b20Addr[i]);
+            // mqtt publish shorter and longer versions: time+temp or just temp
+            String strM = String(mqtt_topic)+sls+stringAddress(ds18b20Addr[i]);
+            String strML = strM + String("T");
+            String strQ = String(nowStr)+spc+String(ds18b20Temp[i]);
+            publishMQTT(strM.c_str(),String(ds18b20Temp[i]).c_str());
+            publishMQTT(strML.c_str(),strQ.c_str());
+            Serial.println(stringAddress(ds18b20Addr[i])+spc+strQ);
           }
         }
-          //end DS18B20 sensor
+        //end mqtt block
 
-
-
-
-
-
-          //start thingspeak block
-        if (timeofDayValid && strlen(tspeak_host)>0)
-       {
-      // String temp = String(dht.readTemperature());
-      // String humidity = String(dht.readHumidity());
-      // String voltage = String(system_get_free_heap_size());
-      WiFiClient client;
-      const int httpPort = 80;
-      if (!client.connect(tspeak_host, httpPort))
+      //start thingspeak block
+      if (timeofDayValid && strlen(tspeak_host)>0)
       {
-        Serial.print("Connecting to ");  Serial.print(tspeak_host);
-        Serial.print(":");  Serial.println(httpPort);
-        Serial.println("connection failed");
-        return;
+        // String temp = String(dht.readTemperature());
+        // String humidity = String(dht.readHumidity());
+        // String voltage = String(system_get_free_heap_size());
+        WiFiClient client;
+        const int httpPort = 80;
+        if (!client.connect(tspeak_host, httpPort))
+        {
+          Serial.print("Connecting to ");  Serial.print(tspeak_host);
+          Serial.print(":");  Serial.println(httpPort);
+          Serial.println("connection failed");
+          return;
+        }
+
+        String url = "/update?key=";
+        url += tspeak_key;
+        for (uint8_t i = 0; i < numSensors; i++)
+        {
+          url += "&field" + String(i+1) + "=" + ds18b20Temp[i];
+        }
+        Serial.print("Requesting URL: ");  Serial.println(url);
+
+        // This will send the request to the server
+        client.print(String("GET ") + url + " HTTP/1.1\r\n" +
+                     "Host: " + tspeak_host + "\r\n" +
+                     "Connection: close\r\n\r\n");
+        delay(10);
+        // Read all the lines of the reply from server and print them to Serial
+        // while(client.available())
+        // {
+        //   String line = client.readStringUntil('\r');
+        //   Serial.print(line);
+        // }
       }
+      //end thingspeak block
 
-            String url = "/update?key=";
-      url += tspeak_key;
-      for (uint8_t i = 0; i < numSensors; i++)
-      {
+    } //if (aliveTick == true)
 
-        url += "&field";
-        url += String(i+1);
-        url += "=";
-      url += ds18b20Temp[i];
-}
-      Serial.print("Requesting URL: ");  Serial.println(url);
+    //start time of day block
+    timenow = now();
+    //end time of day block
 
-      // This will send the request to the server
-      client.print(String("GET ") + url + " HTTP/1.1\r\n" +
-                   "Host: " + tspeak_host + "\r\n" +
-                   "Connection: close\r\n\r\n");
-      delay(10);
-
-      // Read all the lines of the reply from server and print them to Serial
-      while(client.available()){
-        String line = client.readStringUntil('\r');
-        Serial.print(line);
-      }
-
-}
-
-
-
-        } //if (aliveTick == true)
-
-        //start time of day block
-        timenow = now();
-        //end time of day block
-
-
-     // Check if a client has connected to our web server
-     WiFiClient client = wifiserver.available();
-     if (client)
-     {
-
-       //start http client GET block
-       httpString = String("<H1> DS18B20 Temperatures</H1>");
-       httpString = httpString + String("<table border=""1"">");
-       httpString = httpString + String("<tr><th>Time</th><th>Device</th><th>Temperature C</th></tr>");
+   // Check if a client has connected to our web server
+   WiFiClient client = wifiserver.available();
+   if (client)
+   {
+     //start http client GET block
+     httpString = String("<H1> DS18B20 Temperatures</H1>");
+     httpString = httpString + String("<table border=""1"">");
+     httpString = httpString + String("<tr><th>Time</th><th>Device</th><th>Temperature C</th></tr>");
+     String tros = String("<tr>");
+     String troe = String("</tr>");
+     String tcos = String("<td>");
+     String tcoe = String("</td>");
      for (uint8_t i = 0; i < numSensors; i++)
      {
-
-         String spc = String(" ");
-         String sls = String("/");
-         String tros = String("<tr>");
-         String troe = String("</tr>");
-         String tcos = String("<td>");
-         String tcoe = String("</td>");
-         httpString = httpString + tros
-                       + tcos + String(nowStr) + tcoe
-                       + tcos + stringAddress(ds18b20Addr[i]) + tcoe
-                       + tcos + String(ds18b20Temp[i]) + tcoe
-                       + troe + String("<BR>");
-
-         if (timeofDayValid)
-         {
-         // mqtt publish shorter and longer versions: time+temp or just temp
-         String strM = String(mqtt_topic)+sls+stringAddress(ds18b20Addr[i]);
-         String strML = strM + String("T");
-         String strQ = String(nowStr)+spc+String(ds18b20Temp[i]);
-         publishMQTT(strM.c_str(),String(temperature).c_str());
-         publishMQTT(strML.c_str(),strQ.c_str());
-         Serial.println(stringAddress(ds18b20Addr[i])+spc+strQ);
-         }
-
-       }
-       httpString = httpString + String("</table>");
-
-        // Return the response
-        client.println("HTTP/1.1 200 OK");
-        client.println("Content-Type: text/html");
-        client.println(""); //  do not forget this one
-        client.println("<!DOCTYPE HTML>");
-        client.println("<html>");
-        client.println(httpString);
-        client.println("<BR>");
-        client.println("<BR>");
-        client.println(String("Current time: ")+String(nowStr));
-        String strStatus = timeofDayValid ?String("True") : String("False");
-        client.println(String("NTP time sync status is "+strStatus));
-        client.println("<BR>");
-        client.println("</html>");
+       httpString = httpString + tros
+                     + tcos + String(nowStr) + tcoe
+                     + tcos + stringAddress(ds18b20Addr[i]) + tcoe
+                     + tcos + String(ds18b20Temp[i]) + tcoe
+                     + troe + String("<BR>");
      }
-     //end web server
+     httpString = httpString + String("</table>");
 
-
-
+      // Return the response
+      client.println("HTTP/1.1 200 OK");
+      client.println("Content-Type: text/html");
+      client.println(""); //  do not forget this one
+      client.println("<!DOCTYPE HTML>");
+      client.println("<html>");
+      client.println(httpString);
+      client.println("<BR>");
+      client.println("<BR>");
+      client.println(String("Current time: ")+String(nowStr));
+      String strStatus = timeofDayValid ?String("True") : String("False");
+      client.println(String("NTP time sync status is "+strStatus));
+      client.println("<BR>");
+      client.println("</html>");
+   }
+   //end web server
 
     //yield to wifi and other background tasks
     yield();  // or delay(0);
