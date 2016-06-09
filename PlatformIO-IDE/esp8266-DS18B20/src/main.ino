@@ -1,8 +1,8 @@
 /*
 Read all the DS18B20 temperature sensors on the wire interface and
 - publish to MQTT topic.
-- publish to Weather Underground as additional temperatures.
-- publish on a web server.
+- publish to thingspeak
+- publish on a local web server.
 
 Brief description is given here:
 https://github.com/NelisW/myOpenHab/blob/master/docs/423-ESP-multi-DS18B20.md
@@ -36,6 +36,7 @@ extern "C"
 //end OTA block
 
 #define INT6 6
+#define INT18 18
 #define INT40 40
 #define INT64 64
 
@@ -82,10 +83,10 @@ char mqtt_port[INT6];
 char mqtt_topic[INT64];
 //end mqtt block
 
-//start weatherunderground block
-char wuground_station[INT40];
-char wuground_password[INT40];
-//end weatherunderground block
+//start thingspeak block
+char tspeak_host[INT40];
+char tspeak_key[INT18];
+//end thingspeak block
 
 //start DS18B20 sensor
 #include <OneWire.h>
@@ -96,6 +97,8 @@ DallasTemperature tempsensor(&oneWire);
 #define TEMPERATURE_PRECISION 9
 // arrays to hold device addresses
 DeviceAddress * ds18b20Addr;
+float* ds18b20Temp;
+int numSensors=0;
 String httpString;
 //end DS18B20 sensor
 
@@ -108,8 +111,8 @@ void aliveTimerCallback(void *pArg){aliveTick = true;} // when alive timer elaps
 
 //begin wifi manager block
 //default custom static IP
-char static_ip[16] = "192.0.0.99";
-char static_gw[16] = "192.0.0.2";
+char static_ip[16] = "196.0.0.99";
+char static_gw[16] = "196.0.0.2";
 char static_sn[16] = "255.255.255.0";
 //end wifi manager block
 
@@ -317,13 +320,13 @@ void setup_wifimanager(void)
   // The extra parameters to be configured (can be either global or just in the setup)
   // After connecting, parameter.getValue() will get you the configured value
   // id/name placeholder/prompt default length
-  WiFiManagerParameter custom_mqtt_server("server", "mqtt server", mqtt_server, INT40);
-  WiFiManagerParameter custom_mqtt_port("port", "mqtt port", mqtt_port, INT6);
-  WiFiManagerParameter custom_mqtt_user("user", "mqtt user", mqtt_user, INT40);
-  WiFiManagerParameter custom_mqtt_password("password", "mqtt password", mqtt_password, INT40);
-  WiFiManagerParameter custom_mqtt_topic("topic", "mqtt topic", mqtt_topic, INT64);
-  WiFiManagerParameter custom_wuground_station("wuground station", "wuground station", wuground_station, INT40);
-  WiFiManagerParameter custom_wuground_password("wuground password", "wuground password", wuground_password, INT40);
+  WiFiManagerParameter custom_mqtt_server("mqttserver", "mqtt server", mqtt_server, INT40);
+  WiFiManagerParameter custom_mqtt_port("mqttport", "mqtt port", mqtt_port, INT6);
+  WiFiManagerParameter custom_mqtt_user("mqttuser", "mqtt user", mqtt_user, INT40);
+  WiFiManagerParameter custom_mqtt_password("mqttpassword", "mqtt password", mqtt_password, INT40);
+  WiFiManagerParameter custom_mqtt_topic("mqtttopic", "mqtt topic", mqtt_topic, INT64);
+  WiFiManagerParameter custom_tspeak_host("tspeak_host", "thingspeak host", tspeak_host, INT40);
+  WiFiManagerParameter custom_tspeak_key("tspeak_key", "thingspeak key", tspeak_key, INT18);
 
   //set config save notify callback
   wifiManager.setSaveConfigCallback(saveConfigCallback);
@@ -342,8 +345,8 @@ void setup_wifimanager(void)
   wifiManager.addParameter(&custom_mqtt_user);
   wifiManager.addParameter(&custom_mqtt_password);
   wifiManager.addParameter(&custom_mqtt_topic);
-  wifiManager.addParameter(&custom_wuground_station);
-  wifiManager.addParameter(&custom_wuground_password);
+  wifiManager.addParameter(&custom_tspeak_host);
+  wifiManager.addParameter(&custom_tspeak_key);
 
   //reset saved settings
   //wifiManager.resetSettings();
@@ -378,8 +381,8 @@ if (!wifiManager.autoConnect(CAPTIVEPORTALSSID,CAPTIVEPORTALPASSWD))
   strcpy(mqtt_user, custom_mqtt_user.getValue());
   strcpy(mqtt_password, custom_mqtt_password.getValue());
   strcpy(mqtt_topic, custom_mqtt_topic.getValue());
-  strcpy(wuground_station, custom_wuground_station.getValue());
-  strcpy(wuground_password, custom_wuground_password.getValue());
+  strcpy(tspeak_host, custom_tspeak_host.getValue());
+  strcpy(tspeak_key, custom_tspeak_key.getValue());
 
   //save the custom parameters to FS
   Serial.print("---- shouldSaveConfig");
@@ -394,8 +397,8 @@ if (shouldSaveConfig)
     json["mqtt_user"] = mqtt_user;
     json["mqtt_password"] = mqtt_password;
     json["mqtt_topic"] = mqtt_topic;
-    json["wuground_station"] = wuground_station;
-    json["wuground_password"] = wuground_password;
+    json["tspeak_host"] = tspeak_host;
+    json["tspeak_key"] = tspeak_key;
 
     json["ip"] = WiFi.localIP().toString();
     json["gateway"] = WiFi.gatewayIP().toString();
@@ -434,8 +437,8 @@ void setup_wifi()
     Serial.print("mqtt_user: ");    Serial.println(mqtt_user);
     Serial.print("mqtt_password: ");    Serial.println(mqtt_password);
     Serial.print("mqtt_topic: ");    Serial.println(mqtt_topic);
-    Serial.print("wuground_station: ");    Serial.println(wuground_station);
-    Serial.print("wuground_password: ");    Serial.println(wuground_password);
+    Serial.print("tspeak_host: ");    Serial.println(tspeak_host);
+    Serial.print("tspeak_key: ");    Serial.println(tspeak_key);
 
     //delay(10);
   //  Serial.print("Connecting to WiFi network: ");
@@ -547,23 +550,16 @@ void readConfigSpiffs()
           strcpy(mqtt_password, json["mqtt_password"]);
           strcpy(mqtt_port, json["mqtt_port"]);
           strcpy(mqtt_topic, json["mqtt_topic"]);
-          strcpy(wuground_station, json["wuground_station"]);
-          strcpy(wuground_password, json["wuground_password"]);
+          strcpy(tspeak_host, json["tspeak_host"]);
+          strcpy(tspeak_key, json["tspeak_key"]);
 
           if(json["ip"])
           {
             Serial.println("setting custom ip from config");
-            //static_ip = json["ip"];
             strcpy(static_ip, json["ip"]);
             strcpy(static_gw, json["gateway"]);
             strcpy(static_sn, json["subnet"]);
-            //strcat(static_ip, json["ip"]);
-            //static_gw = json["gateway"];
-            //static_sn = json["subnet"];
             Serial.println(static_ip);
-/*            Serial.println("converting ip");
-            IPAddress ip = ipFromCharArray(static_ip);
-            Serial.println(ip);*/
           }
           else
           {
@@ -603,14 +599,12 @@ void setup()
     Serial.println("-------------------------------");
     Serial.println("ESP8266 with WiFiManager and DS18B20 sensors with MQTT notification");
 
-
     setup_wifi();
 
     Serial.println("local ip");
     Serial.println(WiFi.localIP());
     Serial.println(WiFi.gatewayIP());
     Serial.println(WiFi.subnetMask());
-
 
     //set up mqtt and register the callback to subscribe
     Serial.print("Setting up MQTT to server """); Serial.print(mqtt_server);
@@ -636,7 +630,9 @@ void setup()
     if (tempsensor.isParasitePowerMode()) Serial.println("ON"); else Serial.println("OFF");
 
     ds18b20Addr = (DeviceAddress*) calloc(tempsensor.getDeviceCount(), sizeof(DeviceAddress));
-    for (uint8_t i = 0; i < tempsensor.getDeviceCount(); i++)
+    ds18b20Temp = (float*) calloc(tempsensor.getDeviceCount(), sizeof(float));
+    numSensors = tempsensor.getDeviceCount();
+    for (uint8_t i = 0; i < numSensors; i++)
     {
       tempsensor.getAddress(ds18b20Addr[i], i);
       if (ds18b20Addr[i])
@@ -753,145 +749,118 @@ void loop()
        }
 
         aliveTick = false;
-        httpString = String("<H1> DS18B20 Temperatures</H1>");
-        httpString = httpString + String("<table border=""1"">");
-        httpString = httpString + String("<tr><th>Time</th><th>Device</th><th>Temperature C</th></tr>");
 
         //start DS18B20 sensor
         // call sensors.requestTemperatures() to issue a global temperature
         // request to all devices on the bus
         tempsensor.requestTemperatures();
+        numSensors = tempsensor.getDeviceCount();
         delay (400); //wait for result
         // for all devices
-        for (uint8_t i = 0; i < tempsensor.getDeviceCount(); i++)
+        for (uint8_t i = 0; i < numSensors; i++)
         {
           tempsensor.getAddress(ds18b20Addr[i], i);
           if (ds18b20Addr[i])
           {
-            temperature = tempsensor.getTempC(ds18b20Addr[i]);
-
-            String spc = String(" ");
-            String sls = String("/");
-            String tros = String("<tr>");
-            String troe = String("</tr>");
-            String tcos = String("<td>");
-            String tcoe = String("</td>");
-            String str = String(nowStr)+spc+String(temperature);
-            String strM = String(mqtt_topic)+sls+stringAddress(ds18b20Addr[i]);
-            String strML = strM + String("T");
-            httpString = httpString + tros
-                          + tcos + String(nowStr) + tcoe
-                          + tcos + stringAddress(ds18b20Addr[i]) + tcoe
-                          + tcos + String(temperature) + tcoe
-                          + troe + String("<BR>");
-
-            if (timeofDayValid)
-            {
-            // mqtt publish shorter and longer versions: time+temp or just temp
-            publishMQTT(strM.c_str(),String(temperature).c_str());
-            publishMQTT(strML.c_str(),str.c_str());
-            }
-
-            Serial.println(stringAddress(ds18b20Addr[i])+spc+str);
+            ds18b20Temp[i] = tempsensor.getTempC(ds18b20Addr[i]);
           }
         }
-        //end DS18B20 sensor
-        httpString = httpString + String("</table>");
+          //end DS18B20 sensor
+
+
+
+
+
+
+          //start thingspeak block
+        if (timeofDayValid && strlen(tspeak_host)>0)
+       {
+      // String temp = String(dht.readTemperature());
+      // String humidity = String(dht.readHumidity());
+      // String voltage = String(system_get_free_heap_size());
+      WiFiClient client;
+      const int httpPort = 80;
+      if (!client.connect(tspeak_host, httpPort))
+      {
+        Serial.print("Connecting to ");  Serial.print(tspeak_host);
+        Serial.print(":");  Serial.println(httpPort);
+        Serial.println("connection failed");
+        return;
+      }
+
+            String url = "/update?key=";
+      url += tspeak_key;
+      for (uint8_t i = 0; i < numSensors; i++)
+      {
+
+        url += "&field";
+        url += String(i+1);
+        url += "=";
+      url += ds18b20Temp[i];
+}
+      Serial.print("Requesting URL: ");  Serial.println(url);
+
+      // This will send the request to the server
+      client.print(String("GET ") + url + " HTTP/1.1\r\n" +
+                   "Host: " + tspeak_host + "\r\n" +
+                   "Connection: close\r\n\r\n");
+      delay(10);
+
+      // Read all the lines of the reply from server and print them to Serial
+      while(client.available()){
+        String line = client.readStringUntil('\r');
+        Serial.print(line);
+      }
+
+}
+
+
+
+        } //if (aliveTick == true)
 
         //start time of day block
         timenow = now();
         //end time of day block
 
-        //Weather underground website
-        if (timeofDayValid && strlen(wuground_station)>0)
-       {
-        //start http client GET block
-        //https://github.com/esp8266/Arduino/tree/master/libraries/ESP8266HTTPClient
-        //https://github.com/esp8266/Arduino/blob/master/libraries/ESP8266HTTPClient/src/ESP8266HTTPClient.h
-
-        // Initialize and make HTTP request
-        HTTPClient httpclient;
-        //build the string to send to the server
-
-        //example string, all the following on one line
-        //http://weatherstation.wuground.com/weatherstation/updateweatherstation.php
-        //?ID=KCASANFR5&PASSWORD=XXXXXX&dateutc=2000-01-01+10%3A32%3A35&winddir=230&windspeedmph=12
-        //&windgustmph=12&tempf=70&rainin=0&baromin=29.1&dewptf=68.2&humidity=90&weather=&clouds=
-        //&softwaretype=vws%20versionxx&action=updateraw
-
-        //assign dummy values for ourWeather sensor results
-        //these vars are used here temporary for Weather Undergound upload testing
-        // begin this block must be removed
-        float BMP180_Temperature = 32.+1.8*temperature;
-        float BMP180_Pressure = 0.02953*1015;
-        float AM2315_Temperature = 32.+1.8*10.;
-        float AM2315_Humidity = 65.;
-        float currentWindSpeed = 0.621371 * 10.;
-        float currentWindGust = 0.621371 * 15.;
-        float currentWindDirection = 125.;
-        float rainTotal = 0.0254 * 42.4;
-        int uvIndex = 3;
-        // end this block must be removed
-
-        time_t nowutc = timenow - TZHOURS * 3600;
-
-        String str = "http://weatherstation.wuground.com/weatherstation/updateweatherstation.php";
-        //compulsory data
-        str = str + "?ID="+String(wuground_station);
-        str = str + "&PASSWORD="+String(wuground_password);
-        str = str + "&dateutc="+strDateTimeURL(nowutc);
-        str = str + "&action=updateraw";
-
-        //these are not compulsory, but obviously some should be present!
-        str = str + "&winddir="+String(currentWindDirection);   // - [0-360 instantaneous wind direction]
-        str = str + "&windspeedmph="+String(currentWindSpeed);  // - [mph instantaneous wind speed]
-        str = str + "&windgustmph="+String(currentWindGust);   // - [mph current wind gust, using software specific time period]
-        // str = str + "&windgustdir="+String(xx);   //- [0-360 using software specific time period]
-        // str = str + "&windspdmph_avg2m="+String(xx);    // - [mph 2 minute average wind speed mph]
-        // str = str + "&winddir_avg2m="+String(xx);    // - [0-360 2 minute average wind direction]
-        // str = str + "&windgustmph_10m="+String(x);   // - [mph past 10 minutes wind gust mph ]
-        // str = str + "&windgustdir_10m="+String(xx);    // - [0-360 past 10 minutes wind gust direction]
-        str = str + "&humidity="+String(AM2315_Humidity);    // - [% outdoor humidity 0-100%]
-        // str = str + "&dewptf="+String(x);     // - [F outdoor dewpoint F]
-        str = str + "&tempf="+String(AM2315_Temperature);   // - [F outdoor temperature] * for extra outdoor sensors use temp2f, temp3f, and so on
-        // str = str + "&rainin="+String(x);    // - [rain inches over the past hour)] -- the accumulated rainfall in the past 60 min
-        str = str + "&dailyrainin="+String(rainTotal);   //- [rain inches so far today in local time]
-        str = str + "&baromin="+String(BMP180_Pressure);    // - [barometric pressure inches]
-        // str = str + "&solarradiation="+String(xx);     //- [W/m^2]
-        str = str + "&UV="+String(uvIndex);   //- [index]
-        str = str + "&indoortempf="+String(BMP180_Temperature);    //- [F indoor temperature F]
-        // str = str + "&indoorhumidity="+String(x);    //- [% indoor humidity 0-100]
-
-        str = str + "&softwaretype=testing%20version00";
-
-         Serial.println(str);
-          httpclient.begin(str); //HTTP
-          // start connection and send HTTP header
-          int httpCode = httpclient.GET();
-          // httpCode will be negative on error
-          if(httpCode > 0)
-          {
-              // HTTP header has been send and Server response header has been handled
-              Serial.printf("[HTTP] GET... code: %d\n", httpCode);
-              if(httpCode == HTTP_CODE_OK)
-              {
-                  String payload = httpclient.getString();
-                  Serial.println(payload);
-              }
-          } else
-          {
-              Serial.printf("[HTTP] GET... failed, error: %s\n", httpclient.errorToString(httpCode).c_str());
-          }
-          httpclient.end();
-        }
-        //end http client GET block
-
-    } //if (aliveTick == true)
 
      // Check if a client has connected to our web server
      WiFiClient client = wifiserver.available();
      if (client)
      {
+
+       //start http client GET block
+       httpString = String("<H1> DS18B20 Temperatures</H1>");
+       httpString = httpString + String("<table border=""1"">");
+       httpString = httpString + String("<tr><th>Time</th><th>Device</th><th>Temperature C</th></tr>");
+     for (uint8_t i = 0; i < numSensors; i++)
+     {
+
+         String spc = String(" ");
+         String sls = String("/");
+         String tros = String("<tr>");
+         String troe = String("</tr>");
+         String tcos = String("<td>");
+         String tcoe = String("</td>");
+         httpString = httpString + tros
+                       + tcos + String(nowStr) + tcoe
+                       + tcos + stringAddress(ds18b20Addr[i]) + tcoe
+                       + tcos + String(ds18b20Temp[i]) + tcoe
+                       + troe + String("<BR>");
+
+         if (timeofDayValid)
+         {
+         // mqtt publish shorter and longer versions: time+temp or just temp
+         String strM = String(mqtt_topic)+sls+stringAddress(ds18b20Addr[i]);
+         String strML = strM + String("T");
+         String strQ = String(nowStr)+spc+String(ds18b20Temp[i]);
+         publishMQTT(strM.c_str(),String(temperature).c_str());
+         publishMQTT(strML.c_str(),strQ.c_str());
+         Serial.println(stringAddress(ds18b20Addr[i])+spc+strQ);
+         }
+
+       }
+       httpString = httpString + String("</table>");
+
         // Return the response
         client.println("HTTP/1.1 200 OK");
         client.println("Content-Type: text/html");
