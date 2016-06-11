@@ -63,7 +63,9 @@ bool timeofDayValid;
 //end time of day block
 
 //start web server
-WiFiServer wifiserver(80);
+#define HTTPPORT 80
+//WiFiServer wifiserver(HTTPPORT);
+ESP8266WebServer * httpserver;
 //end web server
 
 WiFiClient espClient;
@@ -89,7 +91,7 @@ char tspeak_key[INT18];
 #define DS18GPIO02 2  //DS18B20 is on GPIO02
 OneWire oneWire(DS18GPIO02);
 DallasTemperature tempsensor(&oneWire);
-#define TEMPERATURE_PRECISION 9
+#define TEMPERATURE_PRECISION 11
 // arrays to hold device addresses
 DeviceAddress * ds18b20Addr;
 float* ds18b20Temp;
@@ -490,11 +492,11 @@ setup_wifimanager();
     //end OTA block
 
     //start web server
-    wifiserver.begin();
-    Serial.print("Server started. use this URL to connect: ");
-    Serial.print("http://");
-    Serial.print(WiFi.localIP());
-    Serial.println("/");
+    // wifiserver.begin();
+    // Serial.print("Server started. use this URL to connect: ");
+    // Serial.print("http://");
+    // Serial.print(WiFi.localIP());
+    // Serial.println("/");
     //end web server
 
     //memory status
@@ -585,8 +587,119 @@ void readConfigSpiffs()
   }
   //end read
   Serial.println("leaving readConfigSpiffs...");
-
 }
+
+
+
+
+  void handleNotFound()
+  {
+    String page = FPSTR(HTTP_HEAD);
+    page.replace("{v}", "handleNotFound");
+    page += FPSTR(HTTP_SCRIPT);
+    page += FPSTR(HTTP_STYLE);
+    page += FPSTR(HTTP_HEAD_END);
+    page += FPSTR("File Not Found<BR><BR>\nURI: ");
+    page += FPSTR(httpserver->uri().c_str());
+    page += FPSTR("<BR>\nMethod: ");
+    page += FPSTR((httpserver->method() == HTTP_GET)?"GET":"POST");
+    page += FPSTR("<BR>\nArguments: ");
+    page += FPSTR(httpserver->args());
+    page += FPSTR("<BR>\n");
+
+    for (uint8_t i=0; i<httpserver->args(); i++)
+    {
+      page += FPSTR((String(" ") + httpserver->argName(i) + String(": ") + httpserver->arg(i) + String("<BR>\n")).c_str());
+    }
+    page += FPSTR(HTTP_END);
+    httpserver->send(404, "text/html", page);
+    }
+
+    void  handleReset()
+    {
+      String page = FPSTR(HTTP_HEAD);
+      page.replace("{v}", "Reset");
+      page += FPSTR(HTTP_SCRIPT);
+      page += FPSTR(HTTP_STYLE);
+      page += FPSTR(HTTP_HEAD_END);
+      page += F("Module will reset in a second...");
+      page += FPSTR(HTTP_END);
+      httpserver->send(200, "text/html", page);
+    ESP.reset();
+    }
+
+
+
+  void  handleTemps(){
+    char nowStr[120] ;
+    time_t timenow = now();
+    strcpy(nowStr, strDateTime(timenow).c_str()); // get rid of newline
+    nowStr[strlen(nowStr)-1] = '\0';
+    String page = FPSTR(HTTP_HEAD);
+    page.replace("{v}", "handleRoot");
+    page += FPSTR(HTTP_SCRIPT);
+    page += FPSTR(HTTP_STYLE);
+    page += FPSTR(HTTP_HEAD_END);
+       page = String("<H1> DS18B20 Temperatures</H1>");
+       page = page + String("<table border=""1"">");
+       page = page + String("<tr><th>Time</th><th>Device</th><th>Temperature C</th></tr>");
+       String tros = String("<tr>");
+       String troe = String("</tr>");
+       String tcos = String("<td>");
+       String tcoe = String("</td>");
+       for (uint8_t i = 0; i < numSensors; i++)
+       {
+         page = page + tros
+                       + tcos + String(nowStr) + tcoe
+                       + tcos + stringAddress(ds18b20Addr[i]) + tcoe
+                       + tcos + String(ds18b20Temp[i]) + tcoe
+                       + troe + String("<BR>");
+       }
+       page = page + String("</table><BR><BR>");
+      String strStatus = timeofDayValid ?String("True") : String("False");
+       page = page + String("Current time: ")+String(nowStr);
+       page = page + String("NTP time sync status is "+strStatus);
+       page = page +"<BR>";
+       page += FPSTR(HTTP_END);
+      httpserver->send(200, "text/html", page);
+  };
+
+  void  handleRoot()
+  {
+    handleInfo();
+  }
+
+  void  handleInfo()
+  {
+    String page = FPSTR(HTTP_HEAD);
+    page.replace("{v}", "Info");
+    page += FPSTR(HTTP_SCRIPT);
+    page += FPSTR(HTTP_STYLE);
+    page += FPSTR(HTTP_HEAD_END);
+    page += F("/info : display instructions<BR>\n");
+    page += F("/temps : display temperatures<BR>\n");
+    page += F("/reset : software reset<BR>\n");
+    //page += F("/configsave   ");
+    page += F("/config : show config page<BR>\n");
+    page += FPSTR(HTTP_END);
+    httpserver->send(200, "text/html", page);
+  };
+
+
+  void  handleConfig()
+  {
+    String page = FPSTR(HTTP_HEAD);
+    page.replace("{v}", "Reset");
+    page += FPSTR(HTTP_SCRIPT);
+    page += FPSTR(HTTP_STYLE);
+    page += FPSTR(HTTP_HEAD_END);
+    page += F("Not yet available");
+    page += FPSTR(HTTP_END);
+    httpserver->send(200, "text/html", page);
+   };
+
+
+  void  handleConfigSave(){Serial.println("handleConfigSave()");};
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -603,6 +716,22 @@ void setup()
     Serial.println(WiFi.localIP());
     Serial.println(WiFi.gatewayIP());
     Serial.println(WiFi.subnetMask());
+
+    //set up a web server
+    httpserver = new ESP8266WebServer(HTTPPORT);
+    /* Setup web pages: root, wifi config pages, SO captive portal detectors and not found. */
+    //handler functions must be void fn(void)
+    httpserver->on("/", handleRoot);
+    httpserver->on("/config", handleConfig);
+    httpserver->on("/configsave", handleConfigSave);
+    httpserver->on("/info", handleInfo);
+    httpserver->on("/reset", handleReset);
+    httpserver->on("/temps", handleTemps);
+    httpserver->onNotFound(handleNotFound);
+    httpserver->begin(); // Web server start
+    Serial.println("HTTP server started");
+
+
 
     //set up mqtt and register the callback to subscribe
     Serial.print("Setting up MQTT to server """); Serial.print(mqtt_server);
@@ -635,7 +764,7 @@ void setup()
       tempsensor.getAddress(ds18b20Addr[i], i);
       if (ds18b20Addr[i])
       {
-        // tempsensor.setResolution(ds18b20Addr[i], TEMPERATURE_PRECISION);
+        tempsensor.setResolution(ds18b20Addr[i], TEMPERATURE_PRECISION);
         Serial.print("Device Address: ");
         Serial.print(stringAddress(ds18b20Addr[i]));
         Serial.print(" ");
@@ -651,7 +780,7 @@ void setup()
     //Define a function to be called when the timer fires
     os_timer_disarm(&aliveTimer);
     os_timer_setfn(&aliveTimer, aliveTimerCallback, NULL);
-    int alivetimer = String(alive_interval).toInt();
+    long alivetimer = String(alive_interval).toInt();
     os_timer_arm(&aliveTimer, alivetimer, true);
 
     // begin NTP server time update
@@ -719,7 +848,7 @@ void loop()
         // request to all devices on the bus
         tempsensor.requestTemperatures();
         numSensors = tempsensor.getDeviceCount();
-        delay (400); //wait for result
+        delay (800); //wait 800 ms for result
         // for all devices
         for (uint8_t i = 0; i < numSensors; i++)
         {
@@ -791,43 +920,45 @@ void loop()
     timenow = now();
     //end time of day block
 
-   // Check if a client has connected to our web server
-   WiFiClient client = wifiserver.available();
-   if (client)
-   {
-     //start http client GET block
-     httpString = String("<H1> DS18B20 Temperatures</H1>");
-     httpString = httpString + String("<table border=""1"">");
-     httpString = httpString + String("<tr><th>Time</th><th>Device</th><th>Temperature C</th></tr>");
-     String tros = String("<tr>");
-     String troe = String("</tr>");
-     String tcos = String("<td>");
-     String tcoe = String("</td>");
-     for (uint8_t i = 0; i < numSensors; i++)
-     {
-       httpString = httpString + tros
-                     + tcos + String(nowStr) + tcoe
-                     + tcos + stringAddress(ds18b20Addr[i]) + tcoe
-                     + tcos + String(ds18b20Temp[i]) + tcoe
-                     + troe + String("<BR>");
-     }
-     httpString = httpString + String("</table>");
 
-      // Return the response
-      client.println("HTTP/1.1 200 OK");
-      client.println("Content-Type: text/html");
-      client.println(""); //  do not forget this one
-      client.println("<!DOCTYPE HTML>");
-      client.println("<html>");
-      client.println(httpString);
-      client.println("<BR>");
-      client.println("<BR>");
-      client.println(String("Current time: ")+String(nowStr));
-      String strStatus = timeofDayValid ?String("True") : String("False");
-      client.println(String("NTP time sync status is "+strStatus));
-      client.println("<BR>");
-      client.println("</html>");
-   }
+    httpserver->handleClient();
+   // Check if a client has connected to our web server
+  //  WiFiClient client = wifiserver.available();
+  //  if (client)
+  //  {
+  //    //start http client GET block
+  //    httpString = String("<H1> DS18B20 Temperatures</H1>");
+  //    httpString = httpString + String("<table border=""1"">");
+  //    httpString = httpString + String("<tr><th>Time</th><th>Device</th><th>Temperature C</th></tr>");
+  //    String tros = String("<tr>");
+  //    String troe = String("</tr>");
+  //    String tcos = String("<td>");
+  //    String tcoe = String("</td>");
+  //    for (uint8_t i = 0; i < numSensors; i++)
+  //    {
+  //      httpString = httpString + tros
+  //                    + tcos + String(nowStr) + tcoe
+  //                    + tcos + stringAddress(ds18b20Addr[i]) + tcoe
+  //                    + tcos + String(ds18b20Temp[i]) + tcoe
+  //                    + troe + String("<BR>");
+  //    }
+  //    httpString = httpString + String("</table>");
+   //
+  //     // Return the response
+  //     client.println("HTTP/1.1 200 OK");
+  //     client.println("Content-Type: text/html");
+  //     client.println(""); //  do not forget this one
+  //     client.println("<!DOCTYPE HTML>");
+  //     client.println("<html>");
+  //     client.println(httpString);
+  //     client.println("<BR>");
+  //     client.println("<BR>");
+  //     client.println(String("Current time: ")+String(nowStr));
+  //     String strStatus = timeofDayValid ?String("True") : String("False");
+  //     client.println(String("NTP time sync status is "+strStatus));
+  //     client.println("<BR>");
+  //     client.println("</html>");
+  //  }
    //end web server
 
     //yield to wifi and other background tasks
