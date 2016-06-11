@@ -306,7 +306,7 @@ void configModeCallback (WiFiManager *myWiFiManager)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-void setup_wifimanager(bool doCaptive)
+void setup_wifimanager(void)
 {
   Serial.println("entering setup_wifimanager() ...");
   //Local intialization. Once its business is done, there is no need to keep it around
@@ -436,7 +436,7 @@ void setup_wifi()
     Serial.print("tspeak_key: ");    Serial.println(tspeak_key);
     Serial.print("alive_interval: ");    Serial.println(alive_interval);
 
-    setup_wifimanager(true);
+    setup_wifimanager();
 
     Serial.print("WiFi connected: ");
     Serial.print("IP address: ");
@@ -669,21 +669,6 @@ void readConfigSpiffs()
     httpserver->send(200, "text/html", page);
   }
 
-
-    void  handleConfig()
-    {
-      String page = FPSTR(HTTP_HEAD);
-      page.replace("{v}", "Reset");
-      page += FPSTR(HTTP_SCRIPT);
-      page += FPSTR(HTTP_STYLE);
-      page += FPSTR(HTTP_HEAD_END);
-      page += F("Not yet available");
-      page += FPSTR(HTTP_END);
-      httpserver->send(200, "text/html", page);
-      //setup_wifimanager(true);
-     }
-
-
      void  handleHelp()
      {
        String page = FPSTR(HTTP_HEAD);
@@ -700,13 +685,22 @@ void readConfigSpiffs()
        httpserver->send(200, "text/html", page);
      }
 
-
-
   void  handleConfigSave()
   {
-    ;//setup_wifimanager(true);
+    ;
   }
 
+  void  handleConfig()
+  {
+    String page = FPSTR(HTTP_HEAD);
+    page.replace("{v}", "Reset");
+    page += FPSTR(HTTP_SCRIPT);
+    page += FPSTR(HTTP_STYLE);
+    page += FPSTR(HTTP_HEAD_END);
+    page += F("Not yet available");
+    page += FPSTR(HTTP_END);
+    httpserver->send(200, "text/html", page);
+   }
 
 ////////////////////////////////////////////////////////////////////////////////
 void setup()
