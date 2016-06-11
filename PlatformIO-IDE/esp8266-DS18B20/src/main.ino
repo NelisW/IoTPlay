@@ -306,7 +306,7 @@ void configModeCallback (WiFiManager *myWiFiManager)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-void setup_wifimanager(void)
+void setup_wifimanager(bool doCaptive)
 {
   Serial.println("entering setup_wifimanager() ...");
   //Local intialization. Once its business is done, there is no need to keep it around
@@ -359,17 +359,17 @@ void setup_wifimanager(void)
   //fetches ssid and pass and tries to connect
   //if it does not connect it starts an access point with the specified name
   //and go into a blocking loop awaiting configuration
-if (!wifiManager.autoConnect(CAPTIVEPORTALSSID,CAPTIVEPORTALPASSWD))
-  {
-    Serial.println("failed to connect and hit timeout");
-    delay(3000);
-    //reset and try again, or maybe put it to deep sleep
-    ESP.reset();
-    delay(5000);
-  }
+    if (!wifiManager.autoConnect(CAPTIVEPORTALSSID,CAPTIVEPORTALPASSWD))
+      {
+        Serial.println("failed to connect and hit timeout");
+        delay(3000);
+        //reset and try again, or maybe put it to deep sleep
+        ESP.reset();
+        delay(5000);
+      }
 
   //if you get here you have connected to the WiFi
-  Serial.println("connected...yeey :)");
+  Serial.println("connected...)");
 
   //read updated parameters
   strcpy(mqtt_server, custom_mqtt_server.getValue());
@@ -385,8 +385,8 @@ if (!wifiManager.autoConnect(CAPTIVEPORTALSSID,CAPTIVEPORTALPASSWD))
   //save the custom parameters to FS
   Serial.print("---- shouldSaveConfig");
   Serial.println(shouldSaveConfig);
-if (shouldSaveConfig)
-  {
+  if (shouldSaveConfig)
+    {
     Serial.println("saving config");
     DynamicJsonBuffer jsonBuffer;
     JsonObject& json = jsonBuffer.createObject();
@@ -398,9 +398,6 @@ if (shouldSaveConfig)
     json["tspeak_host"] = tspeak_host;
     json["tspeak_key"] = tspeak_key;
     json["alive_interval"] = alive_interval;
-
-
-
     json["ip"] = WiFi.localIP().toString();
     json["gateway"] = WiFi.gatewayIP().toString();
     json["subnet"] = WiFi.subnetMask().toString();
@@ -439,29 +436,7 @@ void setup_wifi()
     Serial.print("tspeak_key: ");    Serial.println(tspeak_key);
     Serial.print("alive_interval: ");    Serial.println(alive_interval);
 
-    //delay(10);
-  //  Serial.print("Connecting to WiFi network: ");
-  //   Serial.println(wifi_ssid);
-  //   if (0)
-  //   {
-  //   // We start by connecting to a WiFi network
-  //   WiFi.mode(WIFI_STA);
-  //   WiFi.begin(wifi_ssid, wifi_password);
-  //   // start fixed IP block
-  //   WiFi.config(ipLocal, ipGateway, ipSubnetMask);
-  //   // end fixed IP block
-  //
-  //   //get the wifi up
-  //   while (WiFi.status() != WL_CONNECTED)
-  //   {
-  //       delay(500);
-  //       Serial.print(".");
-  //   }
-  // }
-  // else
-  // {
-setup_wifimanager();
-  // }
+    setup_wifimanager(true);
 
     Serial.print("WiFi connected: ");
     Serial.print("IP address: ");
@@ -491,15 +466,7 @@ setup_wifimanager();
     Serial.println("Finished OTA");
     //end OTA block
 
-    //start web server
-    // wifiserver.begin();
-    // Serial.print("Server started. use this URL to connect: ");
-    // Serial.print("http://");
-    // Serial.print(WiFi.localIP());
-    // Serial.println("/");
-    //end web server
-
-    //memory status
+   //memory status
     Serial.print("Sketch size:  ");
     Serial.println(ESP.getSketchSize());
     Serial.print("Flash size:   ");
@@ -589,9 +556,8 @@ void readConfigSpiffs()
   Serial.println("leaving readConfigSpiffs...");
 }
 
-
-
-
+///////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////
   void handleNotFound()
   {
     String page = FPSTR(HTTP_HEAD);
@@ -628,15 +594,15 @@ void readConfigSpiffs()
     ESP.reset();
     }
 
-
-
-  void  handleTemps(){
+  void  handleTemps()
+  {
     char nowStr[120] ;
     time_t timenow = now();
     strcpy(nowStr, strDateTime(timenow).c_str()); // get rid of newline
     nowStr[strlen(nowStr)-1] = '\0';
+
     String page = FPSTR(HTTP_HEAD);
-    page.replace("{v}", "handleRoot");
+    page.replace("{v}", "temps");
     page += FPSTR(HTTP_SCRIPT);
     page += FPSTR(HTTP_STYLE);
     page += FPSTR(HTTP_HEAD_END);
@@ -662,11 +628,11 @@ void readConfigSpiffs()
        page = page +"<BR>";
        page += FPSTR(HTTP_END);
       httpserver->send(200, "text/html", page);
-  };
+  }
 
   void  handleRoot()
   {
-    handleInfo();
+    handleHelp();
   }
 
   void  handleInfo()
@@ -676,30 +642,70 @@ void readConfigSpiffs()
     page += FPSTR(HTTP_SCRIPT);
     page += FPSTR(HTTP_STYLE);
     page += FPSTR(HTTP_HEAD_END);
-    page += F("/info : display instructions<BR>\n");
-    page += F("/temps : display temperatures<BR>\n");
-    page += F("/reset : software reset<BR>\n");
-    //page += F("/configsave   ");
-    page += F("/config : show config page<BR>\n");
+    page += F("<dl>");
+    page += F("<dt>Chip ID</dt><dd>");
+    page += ESP.getChipId();
+    page += F("</dd>");
+    page += F("<dt>Flash Chip ID</dt><dd>");
+    page += ESP.getFlashChipId();
+    page += F("</dd>");
+    page += F("<dt>IDE Flash Size</dt><dd>");
+    page += ESP.getFlashChipSize();
+    page += F(" bytes</dd>");
+    page += F("<dt>Real Flash Size</dt><dd>");
+    page += ESP.getFlashChipRealSize();
+    page += F(" bytes</dd>");
+    page += F("<dt>Soft AP IP</dt><dd>");
+    page += WiFi.softAPIP().toString();
+    page += F("</dd>");
+    page += F("<dt>Soft AP MAC</dt><dd>");
+    page += WiFi.softAPmacAddress();
+    page += F("</dd>");
+    page += F("<dt>Station MAC</dt><dd>");
+    page += WiFi.macAddress();
+    page += F("</dd>");
+    page += F("</dl>");
     page += FPSTR(HTTP_END);
     httpserver->send(200, "text/html", page);
-  };
+  }
 
 
-  void  handleConfig()
+    void  handleConfig()
+    {
+      String page = FPSTR(HTTP_HEAD);
+      page.replace("{v}", "Reset");
+      page += FPSTR(HTTP_SCRIPT);
+      page += FPSTR(HTTP_STYLE);
+      page += FPSTR(HTTP_HEAD_END);
+      page += F("Not yet available");
+      page += FPSTR(HTTP_END);
+      httpserver->send(200, "text/html", page);
+      //setup_wifimanager(true);
+     }
+
+
+     void  handleHelp()
+     {
+       String page = FPSTR(HTTP_HEAD);
+       page.replace("{v}", "Help");
+       page += FPSTR(HTTP_SCRIPT);
+       page += FPSTR(HTTP_STYLE);
+       page += FPSTR(HTTP_HEAD_END);
+       page += F("/info : display ESP info<BR>\n");
+       page += F("/help : display instructions<BR>\n");
+       page += F("/temps : display temperatures<BR>\n");
+       page += F("/reset : software reset<BR>\n");
+       page += F("/config : show config page<BR>\n");
+       page += FPSTR(HTTP_END);
+       httpserver->send(200, "text/html", page);
+     }
+
+
+
+  void  handleConfigSave()
   {
-    String page = FPSTR(HTTP_HEAD);
-    page.replace("{v}", "Reset");
-    page += FPSTR(HTTP_SCRIPT);
-    page += FPSTR(HTTP_STYLE);
-    page += FPSTR(HTTP_HEAD_END);
-    page += F("Not yet available");
-    page += FPSTR(HTTP_END);
-    httpserver->send(200, "text/html", page);
-   };
-
-
-  void  handleConfigSave(){Serial.println("handleConfigSave()");};
+    ;//setup_wifimanager(true);
+  }
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -725,13 +731,12 @@ void setup()
     httpserver->on("/config", handleConfig);
     httpserver->on("/configsave", handleConfigSave);
     httpserver->on("/info", handleInfo);
+    httpserver->on("/help", handleHelp);
     httpserver->on("/reset", handleReset);
     httpserver->on("/temps", handleTemps);
     httpserver->onNotFound(handleNotFound);
     httpserver->begin(); // Web server start
     Serial.println("HTTP server started");
-
-
 
     //set up mqtt and register the callback to subscribe
     Serial.print("Setting up MQTT to server """); Serial.print(mqtt_server);
@@ -832,14 +837,8 @@ void loop()
       int heapSize = ESP.getFreeHeap();
       Serial.println(heapSize, DEC);
 
-       if (timeStatus() == timeNotSet)
-       {
-         timeofDayValid = false;
-       }
-       else
-       {
-         timeofDayValid = true;
-       }
+       if (timeStatus() == timeNotSet) {timeofDayValid = false;}
+       else { timeofDayValid = true; }
 
         aliveTick = false;
 
@@ -892,8 +891,7 @@ void loop()
           return;
         }
 
-        String url = "/update?key=";
-        url += tspeak_key;
+        String url = String("/update?key=") + String(tspeak_key);
         for (uint8_t i = 0; i < numSensors; i++)
         {
           url += "&field" + String(i+1) + "=" + ds18b20Temp[i];
@@ -906,60 +904,19 @@ void loop()
                      "Connection: close\r\n\r\n");
         delay(10);
         // Read all the lines of the reply from server and print them to Serial
-        // while(client.available())
-        // {
-        //   String line = client.readStringUntil('\r');
-        //   Serial.print(line);
-        // }
+        while(0 && client.available())
+        {
+          String line = client.readStringUntil('\r');
+          Serial.print(line);
+        }
       }
       //end thingspeak block
 
     } //if (aliveTick == true)
 
-    //start time of day block
-    timenow = now();
-    //end time of day block
-
-
+    //start web server
     httpserver->handleClient();
-   // Check if a client has connected to our web server
-  //  WiFiClient client = wifiserver.available();
-  //  if (client)
-  //  {
-  //    //start http client GET block
-  //    httpString = String("<H1> DS18B20 Temperatures</H1>");
-  //    httpString = httpString + String("<table border=""1"">");
-  //    httpString = httpString + String("<tr><th>Time</th><th>Device</th><th>Temperature C</th></tr>");
-  //    String tros = String("<tr>");
-  //    String troe = String("</tr>");
-  //    String tcos = String("<td>");
-  //    String tcoe = String("</td>");
-  //    for (uint8_t i = 0; i < numSensors; i++)
-  //    {
-  //      httpString = httpString + tros
-  //                    + tcos + String(nowStr) + tcoe
-  //                    + tcos + stringAddress(ds18b20Addr[i]) + tcoe
-  //                    + tcos + String(ds18b20Temp[i]) + tcoe
-  //                    + troe + String("<BR>");
-  //    }
-  //    httpString = httpString + String("</table>");
-   //
-  //     // Return the response
-  //     client.println("HTTP/1.1 200 OK");
-  //     client.println("Content-Type: text/html");
-  //     client.println(""); //  do not forget this one
-  //     client.println("<!DOCTYPE HTML>");
-  //     client.println("<html>");
-  //     client.println(httpString);
-  //     client.println("<BR>");
-  //     client.println("<BR>");
-  //     client.println(String("Current time: ")+String(nowStr));
-  //     String strStatus = timeofDayValid ?String("True") : String("False");
-  //     client.println(String("NTP time sync status is "+strStatus));
-  //     client.println("<BR>");
-  //     client.println("</html>");
-  //  }
-   //end web server
+    //end web server
 
     //yield to wifi and other background tasks
     yield();  // or delay(0);
