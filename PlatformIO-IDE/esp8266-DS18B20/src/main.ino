@@ -50,6 +50,19 @@ SSD1306Spi        display(D0, D2, D8);
 #define INT40 40
 #define INT64 64
 
+//begin DHT11 sensor
+// Uncomment whatever type you're using!
+#define DHTTYPE DHT11   // DHT 11
+//#define DHTTYPE DHT22   // DHT 22  (AM2302), AM2321
+//#define DHTTYPE DHT21   // DHT 21 (AM2301)
+#include <DHT.h>
+#define PinDHT11 12  //DHT11 is on GPIO00, or D3 on the NodeMCU
+//http://www.esp8266.com/viewtopic.php?f=29&t=3249
+//https://github.com/gonium/esp8266-dht22-sensor/blob/master/src/main.cpp
+DHT dht(PinDHT11, DHTTYPE);
+float humidity;
+float temperatureDHT;
+//end DHT11 sensor
 
 //begin wifi manager block
 #include <DNSServer.h>            //Local DNS Server used for redirecting all requests to the configuration portal
@@ -627,7 +640,7 @@ void readConfigSpiffs()
     page += FPSTR(HTTP_HEAD_END);
        page = String("<H1> DS18B20 Temperatures</H1>");
        page = page + String("<table border=""1"">");
-       page = page + String("<tr><th>Time</th><th>Device</th><th>Temperature C</th></tr>");
+       page = page + String("<tr><th>Time</th><th>Device</th><th>Value</th></tr>");
        String tros = String("<tr>");
        String troe = String("</tr>");
        String tcos = String("<td>");
@@ -637,9 +650,21 @@ void readConfigSpiffs()
          page = page + tros
                        + tcos + String(nowStr) + tcoe
                        + tcos + stringAddress(ds18b20Addr[i]) + tcoe
-                       + tcos + String(ds18b20Temp[i]) + tcoe
+                       + tcos + String(ds18b20Temp[i],1)+" °C" + tcoe
                        + troe + String("<BR>");
        }
+       page = page + tros
+                     + tcos + String(nowStr) + tcoe
+                     + tcos + "DHT temperature" + tcoe
+                     + tcos + String(temperatureDHT,1)+" °C" + tcoe
+                     + troe + String("<BR>");
+
+       page = page + tros
+                     + tcos + String(nowStr) + tcoe
+                     + tcos + "DHT humidity" + tcoe
+                     + tcos + String(humidity,0)+ "% RH" + tcoe
+                     + troe + String("<BR>");
+
        page = page + String("</table><BR><BR>");
       String strStatus = timeofDayValid ?String("True") : String("False");
        page = page + String("Current time: ")+String(nowStr);
@@ -651,7 +676,8 @@ void readConfigSpiffs()
 
   void  handleRoot()
   {
-    handleHelp();
+    //handleHelp();
+    handleTemps();
   }
 
   void  handleInfo()
@@ -754,6 +780,13 @@ void setup()
     display.flipScreenVertically();
     display.setFont(ArialMT_Plain_10);
 #endif
+
+    //begin DHT11 sensor
+    pinMode(PinDHT11, INPUT);
+    dht.begin();
+    humidity = NAN;
+    temperatureDHT = NAN;
+    //end DHT11 sensor
 
 
     setup_wifi();
@@ -889,6 +922,11 @@ void loop()
 
         aliveTick = false;
 
+        //begin DHT11 sensor
+        humidity = dht.readHumidity();
+        temperatureDHT = dht.readTemperature(false); //false means C, true means F
+        //end DHT11 sensor
+
         //start DS18B20 sensor
         // call sensors.requestTemperatures() to issue a global temperature
         // request to all devices on the bus
@@ -967,21 +1005,29 @@ void loop()
     if (clockTick == true )
     {
       clockTick = false;
-          // clear the display
-          display.clear();
-          // draw the current demo method
-          //drawFontFaceDemo();
+      String tvalid = (timeofDayValid == 0? "*": " ");
 
+          String Now = String(nowStr);
+          String strOdate = Now.substring(11,19)+" "+Now.substring(2,4);
+          strOdate += Now.substring(5,7)+Now.substring(8,10)+tvalid;
+          display.clear();
           display.setTextAlignment(TEXT_ALIGN_LEFT);
-          display.setFont(DejaVu_Sans_Condensed_13);
-          display.drawString(1,0, String(nowStr).c_str());
+          //display.setFont(DejaVu_Sans_Condensed_13);
           display.setFont(ArialMT_Plain_16);
+          display.drawString(1,0,strOdate.c_str() );
           for (uint8_t i = 0; i < numSensors; i++)
           {
-            String disStr = String(ds18b20Temp[i])+"°C";
+            String disStr = String(ds18b20Temp[i],1)+" °C";
             display.drawString(0, 13+15*i, disStr.c_str());
           }
-
+          if (!isnan(humidity))
+          {
+            display.drawString(64, 13,  String(humidity,0)+"%RH");
+          }
+          if (!isnan(temperatureDHT))
+          {
+            display.drawString(64, 13+15, String(temperatureDHT,1)+" °C");
+          }
           // write the buffer to the display
           display.display();
         } //if (clockTick == true)
