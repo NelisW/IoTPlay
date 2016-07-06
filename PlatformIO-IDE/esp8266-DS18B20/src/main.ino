@@ -15,6 +15,7 @@ Requires the following libraries (in the platformio terminal):
 5. Json: platformio lib install 64
 */
 
+#define OLED 1
 
 extern "C"
 {
@@ -24,6 +25,19 @@ extern "C"
 #include <FS.h>                   // filesstem: this needs to be first, or it all crashes and burns...
 
 #include <ESP8266WiFi.h>
+
+#ifdef OLED
+#include "SSD1306Spi.h"
+#include "fonts.h"
+// Initialize the OLED display using SPI
+// D5 -> CLK
+// D7 -> MOSI (DOUT)
+// D0 -> RES
+// D2 -> DC
+// D8 -> CS
+SSD1306Spi        display(D0, D2, D8);
+#endif
+
 
 //start OTA block
 #include <ESP8266mDNS.h>
@@ -104,6 +118,11 @@ char alive_interval[INT18] = "5000";// in milliseconds
 volatile bool aliveTick;   //flag set by ISR, must be volatile
 os_timer_t aliveTimer; // send alive signals every so often
 void aliveTimerCallback(void *pArg){aliveTick = true;} // when alive timer elapses
+char clock_interval[INT18] = "1000";// in milliseconds
+volatile bool clockTick;   //flag set by ISR, must be volatile
+os_timer_t clockTimer; // send clock signals every so often
+void clockTimerCallback(void *pArg){clockTick = true;} // when clock timer elapses
+
 
 //begin wifi manager block
 //default custom static IP
@@ -599,7 +618,7 @@ void readConfigSpiffs()
     char nowStr[120] ;
     time_t timenow = now();
     strcpy(nowStr, strDateTime(timenow).c_str()); // get rid of newline
-    nowStr[strlen(nowStr)-1] = '\0';
+    nowStr[strlen(nowStr)] = '\0';
 
     String page = FPSTR(HTTP_HEAD);
     page.replace("{v}", "temps");
@@ -702,6 +721,24 @@ void readConfigSpiffs()
     httpserver->send(200, "text/html", page);
    }
 
+
+
+#ifdef OLED
+void drawFontFaceDemo() {
+    // Font Demo1
+    // create more fonts at http://oleddisplay.squix.ch/
+    display.setTextAlignment(TEXT_ALIGN_LEFT);
+
+    display.setFont(ArialMT_Plain_16);
+    display.drawString(0, 13, "Hello world");
+    display.drawString(0, 30, "Hello world");
+    display.drawString(0, 45, "Hello world");
+}
+#endif
+
+
+
+
 ////////////////////////////////////////////////////////////////////////////////
 void setup()
 {
@@ -709,6 +746,15 @@ void setup()
     Serial.println("");
     Serial.println("-------------------------------");
     Serial.println("ESP8266 with WiFiManager and DS18B20 sensors with MQTT notification");
+
+
+#ifdef OLED
+    // Initialising the UI will init the display too.
+    display.init();
+    display.flipScreenVertically();
+    display.setFont(ArialMT_Plain_10);
+#endif
+
 
     setup_wifi();
 
@@ -775,12 +821,19 @@ void setup()
     //end DS18B20 sensor
 
     //init values
+    //Define a function to be called when the alive timer fires
     aliveTick = false;
-    //Define a function to be called when the timer fires
     os_timer_disarm(&aliveTimer);
     os_timer_setfn(&aliveTimer, aliveTimerCallback, NULL);
     long alivetimer = String(alive_interval).toInt();
     os_timer_arm(&aliveTimer, alivetimer, true);
+    //Define a function to be called when the clock timer fires
+    clockTick = false;
+    os_timer_disarm(&clockTimer);
+    os_timer_setfn(&clockTimer, clockTimerCallback, NULL);
+    long clocktimer = String(clock_interval).toInt();
+    os_timer_arm(&clockTimer, clocktimer, true);
+
 
     // begin NTP server time update
     // set up to do updates
@@ -818,7 +871,7 @@ void loop()
     char nowStr[120] ;
     time_t timenow = now();
     strcpy(nowStr, strDateTime(timenow).c_str()); // get rid of newline
-    nowStr[strlen(nowStr)-1] = '\0';
+    nowStr[strlen(nowStr)] = '\0';
     String spc = String(" ");
     String sls = String("/");
 
@@ -906,7 +959,34 @@ void loop()
       }
       //end thingspeak block
 
+
     } //if (aliveTick == true)
+
+
+    #ifdef OLED
+    if (clockTick == true )
+    {
+      clockTick = false;
+          // clear the display
+          display.clear();
+          // draw the current demo method
+          //drawFontFaceDemo();
+
+          display.setTextAlignment(TEXT_ALIGN_LEFT);
+          display.setFont(DejaVu_Sans_Condensed_13);
+          display.drawString(1,0, String(nowStr).c_str());
+          display.setFont(ArialMT_Plain_16);
+          for (uint8_t i = 0; i < numSensors; i++)
+          {
+            String disStr = String(ds18b20Temp[i])+"°C";
+            display.drawString(0, 13+15*i, disStr.c_str());
+          }
+
+          // write the buffer to the display
+          display.display();
+        } //if (clockTick == true)
+    #endif
+
 
     //start web server
     httpserver->handleClient();
