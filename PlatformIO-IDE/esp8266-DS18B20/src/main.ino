@@ -15,7 +15,8 @@ Requires the following libraries (in the platformio terminal):
 5. Json: platformio lib install 64
 */
 
-#define OLED 1
+#define USEOLED 1
+#define USEDHTSENSOR 1
 
 extern "C"
 {
@@ -26,7 +27,7 @@ extern "C"
 
 #include <ESP8266WiFi.h>
 
-#ifdef OLED
+#ifdef USEOLED
 #include "SSD1306Spi.h"
 #include "fonts.h"
 // Initialize the OLED display using SPI
@@ -50,6 +51,7 @@ SSD1306Spi        display(D0, D2, D8);
 #define INT40 40
 #define INT64 64
 
+#ifdef USEDHTSENSOR
 //begin DHT11 sensor
 // Uncomment whatever type you're using!
 #define DHTTYPE DHT11   // DHT 11
@@ -59,10 +61,19 @@ SSD1306Spi        display(D0, D2, D8);
 #define PinDHT11 12  //DHT11 is on GPIO00, or D3 on the NodeMCU
 //http://www.esp8266.com/viewtopic.php?f=29&t=3249
 //https://github.com/gonium/esp8266-dht22-sensor/blob/master/src/main.cpp
-DHT dht(PinDHT11, DHTTYPE);
+// Initialize DHT sensor
+// NOTE: For working with a faster than ATmega328p 16 MHz Arduino chip, like an ESP8266,
+// you need to increase the threshold for cycle counts considered a 1 or 0.
+// You can do this by passing a 3rd parameter for this threshold.  It's a bit
+// of fiddling to find the right value, but in general the faster the CPU the
+// higher the value.  The default for a 16mhz AVR is a value of 6.  For an
+// Arduino Due that runs at 84mhz a value of 30 works.
+// This is for the ESP8266 processor on ESP-01
+DHT dht(PinDHT11, DHTTYPE, 11);
 float humidity;
 float temperatureDHT;
 //end DHT11 sensor
+#endif
 
 //begin wifi manager block
 #include <DNSServer.h>            //Local DNS Server used for redirecting all requests to the configuration portal
@@ -633,43 +644,46 @@ void readConfigSpiffs()
     strcpy(nowStr, strDateTime(timenow).c_str()); // get rid of newline
     nowStr[strlen(nowStr)] = '\0';
 
+    String strStatus = timeofDayValid ?String("True") : String("False");
+    String tros = String("<tr>");
+    String troe = String("</tr>");
+    String tcos = String("<td>");
+    String tcoe = String("</td>");
     String page = FPSTR(HTTP_HEAD);
-    page.replace("{v}", "temps");
+    page.replace("{v}", String(static_ip)+" Environmental Status");
     page += FPSTR(HTTP_SCRIPT);
     page += FPSTR(HTTP_STYLE);
     page += FPSTR(HTTP_HEAD_END);
-       page = String("<H1> DS18B20 Temperatures</H1>");
-       page = page + String("<table border=""1"">");
-       page = page + String("<tr><th>Time</th><th>Device</th><th>Value</th></tr>");
-       String tros = String("<tr>");
-       String troe = String("</tr>");
-       String tcos = String("<td>");
-       String tcoe = String("</td>");
-       for (uint8_t i = 0; i < numSensors; i++)
-       {
-         page = page + tros
-                       + tcos + String(nowStr) + tcoe
-                       + tcos + stringAddress(ds18b20Addr[i]) + tcoe
-                       + tcos + String(ds18b20Temp[i],1)+" °C" + tcoe
-                       + troe + String("<BR>");
-       }
-       page = page + tros
-                     + tcos + String(nowStr) + tcoe
-                     + tcos + "DHT temperature" + tcoe
-                     + tcos + String(temperatureDHT,1)+" °C" + tcoe
-                     + troe + String("<BR>");
+    page += String("<H1>"+String(static_ip)+" Environmental Status</H1>");
+    page += String("<table border=""1"" cellpadding=""5"" cellspacing=""0"">");
+    page += String("<tr><th>Time</th><th>Device</th><th>Value</th></tr>");
 
-       page = page + tros
-                     + tcos + String(nowStr) + tcoe
-                     + tcos + "DHT humidity" + tcoe
-                     + tcos + String(humidity,0)+ "% RH" + tcoe
-                     + troe + String("<BR>");
+    for (uint8_t i = 0; i < numSensors; i++)
+    {
+        page += tros
+                 + tcos + String(nowStr) + tcoe
+                 + tcos + stringAddress(ds18b20Addr[i]) + tcoe
+                 + tcos + String(ds18b20Temp[i],1)+" &deg;C" + tcoe
+                 + troe + String("<BR>");
+    }
+#ifdef USEDHTSENSOR
+    page += tros
+                 + tcos + String(nowStr) + tcoe
+                 + tcos + "DHT temperature" + tcoe
+                 + tcos + String(temperatureDHT,1)+" &deg;C" + tcoe
+                 + troe + String("<BR>");
 
-       page = page + String("</table><BR><BR>");
-      String strStatus = timeofDayValid ?String("True") : String("False");
-       page = page + String("Current time: ")+String(nowStr);
-       page = page + String("NTP time sync status is "+strStatus);
-       page = page +"<BR>";
+    page += tros
+                 + tcos + String(nowStr) + tcoe
+                 + tcos + "DHT humidity" + tcoe
+                 + tcos + String(humidity,0)+ "% RH" + tcoe
+                 + troe + String("<BR>");
+#endif
+
+       page += String("</table><BR><BR>");
+       page += String("Current time: ")+String(nowStr);
+       page += String("<BR>NTP time sync status is "+strStatus);
+       page += "<BR>";
        page += FPSTR(HTTP_END);
       httpserver->send(200, "text/html", page);
   }
@@ -749,7 +763,7 @@ void readConfigSpiffs()
 
 
 
-#ifdef OLED
+#ifdef USEOLED
 void drawFontFaceDemo() {
     // Font Demo1
     // create more fonts at http://oleddisplay.squix.ch/
@@ -774,20 +788,21 @@ void setup()
     Serial.println("ESP8266 with WiFiManager and DS18B20 sensors with MQTT notification");
 
 
-#ifdef OLED
+#ifdef USEOLED
     // Initialising the UI will init the display too.
     display.init();
     display.flipScreenVertically();
     display.setFont(ArialMT_Plain_10);
 #endif
 
+#ifdef USEDHTSENSOR
     //begin DHT11 sensor
     pinMode(PinDHT11, INPUT);
     dht.begin();
     humidity = NAN;
     temperatureDHT = NAN;
     //end DHT11 sensor
-
+#endif
 
     setup_wifi();
 
@@ -814,7 +829,7 @@ void setup()
     //set up mqtt and register the callback to subscribe
     Serial.print("Setting up MQTT to server """); Serial.print(mqtt_server);
     Serial.print(""" on port """);  Serial.print(mqtt_port);
-    Serial.print(""" with topic """);  Serial.print(mqtt_topic);    Serial.println("""");
+    Serial.print(""" with topic """);  Serial.print(mqtt_topic); Serial.println("""");
     mqttclient.setServer(mqtt_server, String(mqtt_port).toInt());
 
 
@@ -922,10 +937,12 @@ void loop()
 
         aliveTick = false;
 
+#ifdef USEDHTSENSOR
         //begin DHT11 sensor
         humidity = dht.readHumidity();
         temperatureDHT = dht.readTemperature(false); //false means C, true means F
         //end DHT11 sensor
+#endif
 
         //start DS18B20 sensor
         // call sensors.requestTemperatures() to issue a global temperature
@@ -949,12 +966,14 @@ void loop()
         {
           for (uint8_t i = 0; i < numSensors; i++)
           {
-            // mqtt publish shorter and longer versions: time+temp or just temp
+            // short form: just temperature
             String strM = String(mqtt_topic)+sls+stringAddress(ds18b20Addr[i]);
-            String strML = strM + String("T");
-            String strQ = String(nowStr)+spc+String(ds18b20Temp[i]);
             publishMQTT(strM.c_str(),String(ds18b20Temp[i]).c_str());
-            publishMQTT(strML.c_str(),strQ.c_str());
+            //Long form: time+temp
+            String strL = String(mqtt_topic)+"L"+sls+stringAddress(ds18b20Addr[i]);
+            String strQ = String(nowStr)+spc+String(ds18b20Temp[i]);
+            publishMQTT(strL.c_str(),strQ.c_str());
+
             Serial.println(stringAddress(ds18b20Addr[i])+spc+strQ);
           }
         }
@@ -963,9 +982,7 @@ void loop()
       //start thingspeak block
       if (timeofDayValid && strlen(tspeak_host)>0)
       {
-        // String temp = String(dht.readTemperature());
-        // String humidity = String(dht.readHumidity());
-        // String voltage = String(system_get_free_heap_size());
+        // String system_get_free_heap_size = String(system_get_free_heap_size());
         WiFiClient client;
         const int httpPort = 80;
         if (!client.connect(tspeak_host, httpPort))
@@ -1001,7 +1018,7 @@ void loop()
     } //if (aliveTick == true)
 
 
-    #ifdef OLED
+    #ifdef USEOLED
     if (clockTick == true )
     {
       clockTick = false;
@@ -1020,6 +1037,7 @@ void loop()
             String disStr = String(ds18b20Temp[i],1)+" °C";
             display.drawString(0, 13+15*i, disStr.c_str());
           }
+#ifdef USEDHTSENSOR
           if (!isnan(humidity))
           {
             display.drawString(64, 13,  String(humidity,0)+"%RH");
@@ -1028,10 +1046,11 @@ void loop()
           {
             display.drawString(64, 13+15, String(temperatureDHT,1)+" °C");
           }
+#endif
           // write the buffer to the display
           display.display();
         } //if (clockTick == true)
-    #endif
+#endif
 
 
     //start web server
