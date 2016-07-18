@@ -837,7 +837,6 @@ void setup()
     Serial.print(""" with topic """);  Serial.print(mqtt_topic); Serial.println("""");
     mqttclient.setServer(mqtt_server, String(mqtt_port).toInt());
 
-
     //start DS18B20 sensor
     pinMode(DS18GPIO02, INPUT);
     //https://github.com/milesburton/Arduino-Temperature-Control-Library/blob/master/examples/Multiple/Multiple.pde
@@ -902,10 +901,10 @@ void setup()
 
     //start FTP server block
     /////FTP Setup, ensure SPIFFS is started before ftp;  /////////
-    // spiffs already opened in the readconfig function
     if (SPIFFS.begin()) {
        Serial.println("SPIFFS opened!");
-        ftpSrv.begin("esp8266","esp8266");    //username, password for ftp.  set ports in ESP8266FtpServer.h  (default 21, 50009 for PASV)
+        ftpSrv.begin("esp8266","esp8266");
+        //username, password for ftp.  set ports in ESP8266FtpServer.h  (default 21, 50009 for PASV)
     }
     //end FTP server block
 
