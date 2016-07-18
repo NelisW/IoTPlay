@@ -26,7 +26,7 @@ This project measures and displyas DS18B20 temperatures with the following objec
 ## Software
 ### Source code and development environment
 
-The code developed here uses the Arduino ESP8266 core framework,  in the [platformio-ide](https://github.com/NelisW/myOpenHab/blob/master/docs/413b-ESP8266-PlatformIO-Arduino-Framework.md), with [platformio](http://platformio.org/) used from within the [atom](https://atom.io/) editor.  Using the Arduino core libraries simplifies the coding considerably compared to writing code in the Expressif SDK. PlatformIO is a much easier environment to use than The Arduino IDE.  T
+The code developed here uses the Arduino ESP8266 core framework,  in the [platformio-ide](https://github.com/NelisW/myOpenHab/blob/master/docs/413b-ESP8266-PlatformIO-Arduino-Framework.md), with [platformio](http://platformio.org/) used from within the [atom](https://atom.io/) editor.  Using the Arduino core libraries simplifies the coding considerably compared to writing code in the Expressif SDK. PlatformIO is a much easier environment to use than The Arduino IDE.
 
 ### Libraries
 The project uses the following libraries:
@@ -45,6 +45,8 @@ The project uses the following libraries:
 5. [ESP8266_SSD1306](http://platformio.org/lib/show/562/ESP8266_SSD1306) to provide an interface to drive the OLED display.  Install in platformio terminal with `platformio lib install 562`. The use of this library is optional and must be included in the build with a `#define`.
 
 5. [DHT](http://platformio.org/lib/show/19/Adafruit-DHT) to provide an interface to the DHT11. Install in platformio terminal with `platformio lib install 19`.   The use of this library is optional and must be included in the build with a `#define`.
+
+6. [ESP8266FTPServer](https://github.com/nailbuster/esp8266FTPServer.git) to provide a basic FTP server functionality.  This library is currently not available in the PlatformIO library and must be manually installed in the lib folder.  Download from github and place in the `esp8266-DS18B20\lib\ESP8266FTPServer` directory.  This server has limited but very useful capability (see below).
 
 Install the required libraries using the platformio command line method. The easiest method is to work in an environment with no proxies (and set your PC to no proxy) and then type the following at the command line:
 
@@ -116,6 +118,20 @@ A simple web server is running on the IP address for this board. The server disp
 
 ![images/tempstrue.png](images/tempstrue.png)
 
+
+### FTP server
+
+The [ESP8266FTPServer](https://github.com/nailbuster/esp8266FTPServer.git) supports only a single connection, passive ftp mode and no encryption.  The default username is `esp8266` and the default password is `esp8266` (change in the code if required).  The ftp client must be set up accordingly. If FileZilla is used follow this procedure:
+
+1.  Open <File><Site Manager> and create a new site and enter the Host IP, username and password. 
+2.  Set the encryption to plain ftp (insecure).
+3.  On the <Transfer Settings> tab, set the limit of simultaneous connections to 1.
+
+![images/ftpsetup01.JPG](images/ftpsetup01.JPG) 
+![images/ftpsetup02.JPG](images/ftpsetup02.JPG) 
+![images/ftpsetup03.JPG](images/ftpsetup03.JPG) 
+
+If set up this way, you should be able to see the `json.config` file in the root directory.
 
 ## OLED display
 

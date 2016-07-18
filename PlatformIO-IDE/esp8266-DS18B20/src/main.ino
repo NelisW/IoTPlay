@@ -4,8 +4,6 @@ Read all the DS18B20 temperature sensors on the wire interface and
 - publish to thingspeak
 - publish on a local web server.
 
-Brief description is given here:
-https://github.com/NelisW/myOpenHab/blob/master/docs/423-ESP-multi-DS18B20.md
 
 Requires the following libraries (in the platformio terminal):
 1. PubSubClient: install with platformio lib install 89
@@ -45,6 +43,13 @@ SSD1306Spi        display(D0, D2, D8);
 #include <WiFiUdp.h>
 #include <ArduinoOTA.h>
 //end OTA block
+
+//start FTP server block
+#include <ESP8266FtpServer.h>
+FtpServer ftpSrv;   //set #define FTP_DEBUG in ESP8266FtpServer.h to see ftp verbose on serial
+//end FTP server block
+
+
 
 #define INT6 6
 #define INT18 18
@@ -895,6 +900,15 @@ void setup()
     setSyncInterval(NTPSYNCINTERVAL);
     // end NTP server time update
 
+    //start FTP server block
+    /////FTP Setup, ensure SPIFFS is started before ftp;  /////////
+    // spiffs already opened in the readconfig function
+    if (SPIFFS.begin()) {
+       Serial.println("SPIFFS opened!");
+        ftpSrv.begin("esp8266","esp8266");    //username, password for ftp.  set ports in ESP8266FtpServer.h  (default 21, 50009 for PASV)
+    }
+    //end FTP server block
+
     Serial.println("Setup completed!");
 }
 
@@ -1056,6 +1070,10 @@ void loop()
     //start web server
     httpserver->handleClient();
     //end web server
+
+    //start FTP server block
+    ftpSrv.handleFTP();        //make sure in loop you call handleFTP()!!
+    //end FTP server block
 
     //yield to wifi and other background tasks
     yield();  // or delay(0);
